@@ -25,6 +25,7 @@ function setHero(game) {
   $('#favorite').textContent = game?.favorite ? '★' : '☆';
   $('#favorite').classList.toggle('favorited', !!game?.favorite);
   $('#favorite').setAttribute('aria-label', game?.favorite ? 'Убрать из избранного' : 'В избранное');
+  $('#saves-button').hidden = !game;
   $('#remove').hidden = game?.source !== 'local';
   $('#edit').hidden = !game;
   $('#hero-counter').textContent = game ? `${visible.findIndex(g => g.id === game.id) + 1} / ${visible.length} в этой коллекции` : 'Твоя библиотека начинается здесь';
@@ -86,6 +87,8 @@ async function launch(game = selected) {
       $('#switch-description').textContent = `${game.name} будет запущена с аккаунтом ${result.account.name} (${result.account.login}).`;
       $('#switch-dialog').showModal();
       $('#switch-dialog .dialog-actions .secondary').focus();
+    } else if(result.preparing) {
+      toast('Проверяю сохранения перед запуском…');
     } else {
       game.lastPlayed = Date.now()/1000;
       toast('Запрос на запуск отправлен · ' + game.name);
@@ -99,6 +102,7 @@ function openAdd() {
   $('#editor-title').textContent = 'Добавить игру';
   $('#editor-submit').textContent = 'Добавить в библиотеку';
   $('#editor-delete').hidden = true;
+  window.prepareRunner?.(null);
   $('#add-dialog').showModal();
 }
 function openEdit() {
@@ -120,6 +124,7 @@ function openEdit() {
   $('#game-args').value = selected.arguments || ''; $('#game-cwd').value = selected.cwd || '';
   $('#game-cover').placeholder = selected.cover ? 'Текущая обложка сохранится' : 'PNG, JPG или WebP';
   $('#editor-delete').hidden = false;
+  window.prepareRunner?.(selected);
   $('#add-dialog').showModal();
 }
 function cycle(selector, step) {
@@ -156,7 +161,7 @@ $('#add-form').onsubmit = async e => {
   e.preventDefault(); const submit = $('#editor-submit'); submit.disabled = true;
   try {
     const wasEditing = !!editingId;
-    const r = await api(wasEditing ? 'edit' : 'add', {id:editingId,name:$('#game-name').value,path:$('#game-path').value,arguments:$('#game-args').value,cwd:$('#game-cwd').value,cover:$('#game-cover').value,clearCover:$('#clear-cover').checked});
+    const r = await api(wasEditing ? 'edit' : 'add', {id:editingId,name:$('#game-name').value,path:$('#game-path').value,arguments:$('#game-args').value,runner:$('#game-runner').value,proton:$('#game-proton').value,cwd:$('#game-cwd').value,cover:$('#game-cover').value,clearCover:$('#clear-cover').checked});
     games = r.games;
     if(!wasEditing) { tab = 'all'; source = 'all'; $('#search').value=''; document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab==='all')); document.querySelectorAll('[data-source]').forEach(b=>b.classList.toggle('active',b.dataset.source==='all')); }
     render(r.id); $('#add-dialog').close(); $('#add-form').reset();
@@ -208,6 +213,8 @@ const HELP = [
   ['Следующий / предыдущий элемент','Tab / Shift+Tab','В окнах: крестовина / стик'],
   ['Сохранить форму','Ctrl+Enter','Выбрать «Сохранить» и A / ×'],
   ['При ожидании входа: открыть Steam / отменить','F8 / Esc','X / □ открыть, B / ○ отменить'],
+  ['Возврат в Orbit / текущие игры','Меню → Текущие игры','Guide / PS в консольном режиме'],
+  ['Экранная клавиатура','Консоль → Экранная клавиатура','A / × в текстовом поле'],
   ['Полный экран','F11','Меню → Полный экран'],
   ['Закрыть Orbit','Ctrl+Q','Меню → Закрыть Orbit']
 ];
@@ -280,6 +287,7 @@ let previousButtons = [], nextMove = 0;
 function handleGamepad(pad, now) {
   const pressed = i => !!pad.buttons[i]?.pressed;
   const fresh = i => pressed(i) && !previousButtons[i];
+  if(fresh(16)) window.orbitRunningMenu?.();
   const modal = document.activeElement.closest('dialog[open]') || [...document.querySelectorAll('dialog[open]')].at(-1);
   if(!modal && launching) {
     if(fresh(1)) $('#cancel-switch').click();
@@ -306,7 +314,10 @@ function handleGamepad(pad, now) {
         } else moveDialogFocus(modal,horizontal,true);
         nextMove = now+230;
       }
-      if(fresh(0) && modal.contains(document.activeElement)) document.activeElement.click();
+      if(fresh(0) && modal.contains(document.activeElement)) {
+        if(document.activeElement.matches('input:not([type=checkbox]):not([type=number]),textarea') && window.orbitKeyboard) window.orbitKeyboard(document.activeElement);
+        else document.activeElement.click();
+      }
     }
   } else {
     const typing = ['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName);

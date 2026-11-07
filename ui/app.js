@@ -58,7 +58,7 @@ function render(preferred) {
   setHero(visible.find(g => g.id === preferred) || visible.find(g => g.id === selected?.id) || visible[0] || null);
   $('#status').textContent = `${games.length} в библиотеке · ${games.filter(g => g.installed).length} установлено`;
 }
-async function refresh() { try { const r = await api('library'); games = r.games; accounts = r.accounts || []; activeAccount = r.activeAccount || ''; skipShaderPrecache = !!r.skipShaderPrecache; updateShaderSetting(); render(); } catch (error) { toast(error.message); } }
+async function refresh() { try { const r = await api('library'); games = r.games; accounts = r.accounts || []; activeAccount = r.activeAccount || ''; if(r.platform === 'windows') { $('#executable-help').textContent = 'Выбери файл игры .exe или .com.'; $('#game-path').placeholder = 'C:\\Games\\MyGame\\game.exe'; $('#compatibility-note').textContent = 'Аргументы запуска и рабочая папка доступны в параметрах игры.'; } skipShaderPrecache = !!r.skipShaderPrecache; updateShaderSetting(); render(); } catch (error) { toast(error.message); } }
 function updateShaderSetting() {
   $('#shader-skip-value').textContent = skipShaderPrecache ? 'ВКЛ' : 'ВЫКЛ';
   $('#shader-skip').setAttribute('aria-pressed',String(skipShaderPrecache));

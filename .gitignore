@@ -12,3 +12,9 @@ Orbit.desktop
 .aws/
 .codex/
 .pytest_cache/
+
+# Release build output
+build/
+dist/
+release-dist/
+*.spec

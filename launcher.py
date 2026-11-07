@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Orbit — a local, offline-first game launcher for Linux."""
+"""Orbit — a local, offline-first game launcher for Linux and Windows."""
 from __future__ import annotations
 import argparse
 from datetime import datetime
@@ -15,13 +15,24 @@ import sys
 import time
 import uuid
 
-ROOT = Path(__file__).resolve().parent
-DATA = Path(os.environ.get('ORBIT_DATA_DIR', ROOT / 'data'))
+import orbit_platform as platform
+
+VERSION = "0.1.0"
+
+ROOT = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent))
+LEGACY_DATA = Path(__file__).resolve().parent / 'data'
+DATA = Path(os.environ.get('ORBIT_DATA_DIR') or (LEGACY_DATA if not getattr(sys, 'frozen', False) and LEGACY_DATA.exists() else platform.user_data_directory()))
+
+
+def parse_arguments(text):
+    if '\0' in text:
+        raise ValueError('Недопустимый символ в аргументах запуска.')
+    return platform.split_windows_arguments(text) if platform.IS_WINDOWS else shlex.split(text)
 
 
 def read_vdf(path):
     """Read Steam's text KeyValues (including escaped paths)."""
-    tokens = re.findall(r'"((?:\\.|[^"\\])*)"|([{}])', path.read_text(errors='replace'))
+    tokens = re.findall(r'"((?:\\.|[^"\\])*)"|([{}])', path.read_text(encoding='utf-8', errors='replace'))
     stack, result = [], {}
     current, key = result, None
     for value, brace in tokens:
@@ -73,12 +84,21 @@ def app_names(path):
 
 
 def steam_roots():
+    if platform.IS_WINDOWS:
+        return platform.windows_steam_roots()
     paths = [Path.home() / x for x in ('.local/share/Steam', '.steam/steam', '.var/app/com.valvesoftware.Steam/data/Steam')]
     return list(dict.fromkeys(p.resolve() for p in paths if p.exists()))
 
 
 
 def steam_command(root=None):
+    if platform.IS_WINDOWS:
+        roots = ([Path(root)] if root else []) + steam_roots()
+        for path in roots:
+            exe = path / 'steam.exe'
+            if exe.is_file():
+                return [str(exe)]
+        raise ValueError('Steam не найден. Установите Steam и войдите в аккаунт.')
     if root and '/.var/app/com.valvesoftware.Steam/' in str(root):
         if shutil.which('flatpak'):
             return ['flatpak', 'run', 'com.valvesoftware.Steam']
@@ -114,6 +134,8 @@ def steam_accounts():
 
 def steam_processes():
     """Read only this user's Steam processes; never signal unrelated processes."""
+    if platform.IS_WINDOWS:
+        return platform.windows_steam_processes()
     found = []
     for proc in Path('/proc').glob('[0-9]*'):
         try:
@@ -130,6 +152,8 @@ def steam_processes():
 
 def minimize_steam_library():
     """Minimize authenticated Steam's main X11/Xwayland window, never games/login dialogs."""
+    if platform.IS_WINDOWS:
+        return platform.windows_minimize_steam({pid for pid, _ in steam_processes()})
     if not shutil.which('xdotool') or not os.environ.get('DISPLAY'):
         return 0
     owned = {pid for pid, _ in steam_processes()}
@@ -171,6 +195,8 @@ def account_from_connection_log(text, started):
 
 
 def active_steam_account():
+    if platform.IS_WINDOWS:
+        return platform.windows_active_account() if steam_processes() else ''
     processes = steam_processes()
     for _, args in processes:
         for arg in args:
@@ -202,6 +228,8 @@ def active_steam_account():
 
 
 def running_steam_games():
+    if platform.IS_WINDOWS:
+        return platform.windows_running_games()
     for proc in Path('/proc').glob('[0-9]*'):
         try:
             if proc.stat().st_uid != os.getuid():
@@ -259,14 +287,14 @@ class Library:
         self.path = self.data / 'library.json'
         self.state = {'custom': [], 'favorites': [], 'recent': {}, 'steamAccounts': {}, 'skipShaderPrecache': False}
         if self.path.exists():
-            saved = json.loads(self.path.read_text())
+            saved = json.loads(self.path.read_text(encoding='utf-8'))
             self.state.update(saved)
         self.games = []
 
     def save(self):
         self.data.mkdir(parents=True, exist_ok=True)
         temp = self.path.with_suffix('.tmp')
-        temp.write_text(json.dumps(self.state, ensure_ascii=False, indent=2))
+        temp.write_text(json.dumps(self.state, ensure_ascii=False, indent=2), encoding='utf-8')
         temp.replace(self.path)
 
     def refresh(self):
@@ -289,7 +317,9 @@ class Library:
         name = p.get('name', '').strip()
         if not path.is_file() or not name:
             raise ValueError('Укажите название и существующий файл игры.')
-        shlex.split(p.get('arguments', ''))
+        parse_arguments(p.get('arguments', ''))
+        if platform.IS_WINDOWS and path.suffix.lower() not in ('.exe', '.com'):
+            raise ValueError('Для Windows выбери исполняемый файл .exe или .com.')
         cwd = Path(p.get('cwd') or path.parent).expanduser().resolve()
         if not cwd.is_dir():
             raise ValueError('Рабочая папка не найдена.')
@@ -340,9 +370,11 @@ class Library:
             path = Path(game['path'])
             if not path.is_file():
                 raise ValueError('Файл игры не найден. Возможно, диск отключён.')
-            if not os.access(path, os.X_OK):
+            if platform.IS_WINDOWS and path.suffix.lower() not in ('.exe', '.com'):
+                raise ValueError('Для Windows выбери файл .exe или .com.')
+            if not platform.IS_WINDOWS and not os.access(path, os.X_OK):
                 raise ValueError('Нет права на запуск. В свойствах файла разрешите выполнение.')
-            subprocess.Popen([str(path), *shlex.split(game.get('arguments', ''))], cwd=str(Path(game.get('cwd') or path.parent)), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.Popen([str(path), *parse_arguments(game.get('arguments', ''))], cwd=str(Path(game.get('cwd') or path.parent)), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.state['recent'][game_id] = time.time()
         self.save()
         return {'ok': True}
@@ -434,7 +466,7 @@ def create_bridge(window, library):
                 if self.pending and action in ('setAccount', 'remove', 'edit') and p.get('id') == self.pending['gameId']:
                     raise ValueError('Дождись переключения Steam, прежде чем менять параметры этой игры.')
                 if action == 'library':
-                    result = {'games': library.refresh(), 'accounts': steam_accounts(), 'activeAccount': active_steam_account(), 'skipShaderPrecache': library.state['skipShaderPrecache']}
+                    result = {'games': library.refresh(), 'accounts': steam_accounts(), 'activeAccount': active_steam_account(), 'skipShaderPrecache': library.state['skipShaderPrecache'], 'platform': 'windows' if platform.IS_WINDOWS else 'linux', 'version': VERSION}
                 elif action == 'launch':
                     if self.pending:
                         raise ValueError('Сначала дождись переключения аккаунта Steam.')
@@ -501,7 +533,7 @@ def create_bridge(window, library):
                     library.save()
                     result = {'ok': True}
                 elif action == 'chooseExecutable':
-                    path, _ = QFileDialog.getOpenFileName(window, 'Выбрать игру · ELF, AppImage или скрипт', str(Path.home()))
+                    path, _ = QFileDialog.getOpenFileName(window, 'Выбрать игру', str(Path.home()), 'Приложения (*.exe *.com)' if platform.IS_WINDOWS else 'Все файлы (*)')
                     result = {'path': path, 'name': Path(path).stem if path else ''}
                 elif action == 'chooseCover':
                     path, _ = QFileDialog.getOpenFileName(window, 'Выбрать обложку', str(Path.home()), 'Изображения (*.png *.jpg *.jpeg *.webp)')
@@ -542,6 +574,7 @@ def run():
     from PySide6.QtWebChannel import QWebChannel
 
     parser = argparse.ArgumentParser(description='Orbit game launcher')
+    parser.add_argument('--version', action='version', version=VERSION)
     parser.add_argument('--windowed', action='store_true')
     parser.add_argument('--screenshot', type=Path)
     parser.add_argument('--apply-steam-settings', action='store_true', help='Restart Steam to apply the saved shader setting')
@@ -550,6 +583,8 @@ def run():
     app.setApplicationName('Orbit')
     window = QMainWindow()
     window.setWindowTitle('Orbit · Твоя игровая вселенная')
+    from PySide6.QtGui import QIcon
+    window.setWindowIcon(QIcon(str(ROOT / 'ui/icon.svg')))
     window.resize(1440, 920)
     view = QWebEngineView()
     window.setCentralWidget(view)

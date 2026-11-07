@@ -45,6 +45,9 @@ class TorrentTests(unittest.TestCase):
             restored.action(tid,'remove'); self.assertEqual(restored.status()['items'],[])
             self.assertEqual((dest/'sample.bin').read_bytes(),payload)
             seeder.pause(); client.session.pause(); restored.session.pause()
+            client.handles.clear(); restored.handles.clear()
+            client.session=None; restored.session=None
+            del seeder
 
 
 if __name__=='__main__': unittest.main()

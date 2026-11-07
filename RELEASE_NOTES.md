@@ -1,13 +1,20 @@
-Orbit 0.1.0 — Steam and custom games in one console-style launcher.
+## Orbit 0.2.0
 
-Downloads (x86_64):
-- Windows 10/11: `Orbit-0.1.0-windows-x64-setup.exe`. Per-user installer; Python is included.
-- Debian/Ubuntu with glibc 2.35+: `.deb` (`sudo apt install ./orbit-launcher_0.1.0_amd64.deb`).
-- Fedora and compatible systems with glibc 2.35+: `.rpm` (`sudo dnf install ./orbit-launcher-0.1.0-1.x86_64.rpm`).
-- Arch Linux: `.pkg.tar.zst` (`sudo pacman -U ./orbit-launcher-0.1.0-1-x86_64.pkg.tar.zst`).
+- Встроенные торрент-загрузки: magnet и .torrent, очередь, пауза, продолжение, ограничения скорости, сохранение очереди между запусками. После загрузки можно открыть папку и добавить игру или установщик.
+- Обновление из GitHub: проверка новой версии, список изменений, скачивание и проверка SHA-256, установка и перезапуск одной кнопкой после проверки версии. Системное подтверждение установки на Linux сохраняется.
+- Proton для собственных Windows-игр на Linux: обнаружение установленных Proton / GE-Proton, выбор версии и отдельное окружение каждой игры.
+- Сохранения через папку облака / Syncthing: общий ключ игры между компьютерами, проверка перед запуском, синхронизация после выхода, история версий, резервная копия перед восстановлением и ручной выбор при конфликте.
+- Консольный режим: автозапуск после входа, экранная клавиатура с русской и английской раскладкой, возврат по Guide / PS, меню текущих игр, возврат в игру / завершение, сон и выключение с подтверждением.
 
-Features: automatic Steam library discovery, saved Steam accounts, custom executables, editable launch parameters, favorites, keyboard/gamepad navigation and optional Steam shader pre-cache bypass.
+### Установка
 
-The Windows installer is unsigned. Windows may show a reputation warning. Saves and settings remain in the user's data directory when upgrading or uninstalling. Steam/Steam Guard still handles authentication.
+- Windows x64: `Orbit-0.2.0-windows-x64-setup.exe`.
+- Debian / Ubuntu x64: `.deb`.
+- Fedora / RPM x64: `.rpm`.
+- Arch x64: `.pkg.tar.zst`, установка через `sudo pacman -U`.
 
-SHA-256 checksum lists are included. Native builds and automated startup smoke tests run on Linux and Windows before publication. Actual games and physical controllers are not tested by CI.
+Python, Qt, libtorrent и SDL включены в пакеты. Proton / GE-Proton устанавливается отдельно через Steam или привычный менеджер совместимости. Для облачных сохранений нужна папка, уже синхронизируемая облачным клиентом или Syncthing.
+
+Guide / PS зависит от геймпада и настроек системы: Steam или рабочий стол могут перехватить кнопку. Возврат в окно игры на Linux поддерживается через xdotool на X11 / Xwayland; на Wayland используйте переключение окон системы. Некоторые сторонние игровые загрузчики, которые завершаются и передают игру другому процессу, могут потребовать ручной синхронизации после выхода. Orbit должен оставаться открытым для отслеживания завершения игры.
+
+Windows-установщик не подписан сертификатом. Linux-пакеты требуют glibc 2.35 или новее.

@@ -16,8 +16,11 @@ import time
 import uuid
 
 import orbit_platform as platform
+import orbit_services as services
+import orbit_console as console
+from concurrent.futures import ThreadPoolExecutor
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 ROOT = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent))
 LEGACY_DATA = Path(__file__).resolve().parent / 'data'
@@ -285,11 +288,12 @@ class Library:
     def __init__(self, data=DATA):
         self.data = Path(data)
         self.path = self.data / 'library.json'
-        self.state = {'custom': [], 'favorites': [], 'recent': {}, 'steamAccounts': {}, 'skipShaderPrecache': False}
+        self.state = {'custom': [], 'favorites': [], 'recent': {}, 'steamAccounts': {}, 'skipShaderPrecache': False, 'saves': {}, 'consoleMode': False, 'autostart': False, 'torrentLimits': [0, 0]}
         if self.path.exists():
             saved = json.loads(self.path.read_text(encoding='utf-8'))
             self.state.update(saved)
         self.games = []
+        self.last_process = None
 
     def save(self):
         self.data.mkdir(parents=True, exist_ok=True)
@@ -318,6 +322,8 @@ class Library:
         if not path.is_file() or not name:
             raise ValueError('Укажите название и существующий файл игры.')
         parse_arguments(p.get('arguments', ''))
+        if p.get('runner', 'native') not in ('native', 'proton'):
+            raise ValueError('Неизвестный способ запуска.')
         if platform.IS_WINDOWS and path.suffix.lower() not in ('.exe', '.com'):
             raise ValueError('Для Windows выбери исполняемый файл .exe или .com.')
         cwd = Path(p.get('cwd') or path.parent).expanduser().resolve()
@@ -335,7 +341,7 @@ class Library:
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, destination)
             cover = destination.as_uri()
-        game = {'id': gid, 'name': name, 'path': str(path), 'arguments': p.get('arguments', ''), 'cwd': str(cwd), 'source': 'local', 'cover': cover, 'hero': cover}
+        game = {'id': gid, 'name': name, 'path': str(path), 'arguments': p.get('arguments', ''), 'cwd': str(cwd), 'source': 'local', 'cover': cover, 'hero': cover, 'runner': p.get('runner', 'native'), 'proton': p.get('proton', '')}
         if existing:
             existing.update(game)
         else:
@@ -372,9 +378,8 @@ class Library:
                 raise ValueError('Файл игры не найден. Возможно, диск отключён.')
             if platform.IS_WINDOWS and path.suffix.lower() not in ('.exe', '.com'):
                 raise ValueError('Для Windows выбери файл .exe или .com.')
-            if not platform.IS_WINDOWS and not os.access(path, os.X_OK):
-                raise ValueError('Нет права на запуск. В свойствах файла разрешите выполнение.')
-            subprocess.Popen([str(path), *parse_arguments(game.get('arguments', ''))], cwd=str(Path(game.get('cwd') or path.parent)), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            command, environment = services.game_command(game, self.data, steam_roots(), platform.IS_WINDOWS)
+            self.last_process = subprocess.Popen([*command, *parse_arguments(game.get('arguments', ''))], env=environment, cwd=str(Path(game.get('cwd') or path.parent)), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.state['recent'][game_id] = time.time()
         self.save()
         return {'ok': True}
@@ -387,14 +392,183 @@ def create_bridge(window, library):
     class Bridge(QObject):
         launchFinished = Signal(str)
         launchProgress = Signal(str)
+        serviceFinished = Signal(str)
+        sessionChanged = Signal(str)
 
         def __init__(self):
             super().__init__()
             self.pending = None
+            self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='orbit-services')
+            self.jobs = {}
+            self.saves = services.Saves(library.data)
+            self.updater = services.Updater(library.data, VERSION)
+            self.torrents = services.Torrents(library.data)
+            self.sessions = {}
+            self.save_queue = []
+            self.guide = console.GuideButton()
+            self.last_session_poll = 0
+            self.service_timer = QTimer(self)
+            self.service_timer.setInterval(250)
+            self.service_timer.timeout.connect(self.poll_services)
+            self.service_timer.start()
+            if (library.data / 'torrents/queue.json').exists():
+                try:
+                    self.torrents.start()
+                    self.torrents.limits(*library.state['torrentLimits'])
+                except (ImportError, OSError, RuntimeError, ValueError) as error:
+                    self.torrents.error = str(error)
             self.presentation = None
             self.timer = QTimer(self)
             self.timer.setInterval(500)
             self.timer.timeout.connect(self.poll_switch)
+
+        def job(self, kind, function, callback=None):
+            if self.jobs:
+                raise ValueError('Дождись завершения текущей фоновой операции.')
+            jid = uuid.uuid4().hex
+            self.jobs[jid] = (kind, self.executor.submit(function), callback)
+            return {'job': jid}
+
+        def launch_game(self, gid):
+            game = library.game(gid)
+            if not game:
+                raise ValueError('Игра не найдена.')
+            if gid in self.sessions:
+                raise ValueError('Игра уже запущена. Открой меню текущей игры.')
+            target = library.steam_target(game) if game['source'] == 'steam' else None
+            if target and target['id'] != active_steam_account():
+                return {'needsAccountSwitch': True, 'account': target, 'gameId': gid}
+            profile = library.state['saves'].get(gid)
+            def start():
+                library.last_process = None
+                result = library.launch(gid)
+                if result.get('ok'):
+                    self.sessions[gid] = console.GameSession(game, library.last_process)
+                    self.sessionChanged.emit(json.dumps({'message': 'Игра запущена: ' + game.get('name', game['id'])}))
+                return result
+            if profile:
+                self.job('beforeLaunch', lambda: self.saves.sync(gid, profile), lambda _: self.launchFinished.emit(json.dumps(start())))
+                return {'preparing': True}
+            return start()
+
+        def poll_services(self):
+            for jid, (kind, future, callback) in list(self.jobs.items()):
+                if not future.done():
+                    continue
+                del self.jobs[jid]
+                try:
+                    result = future.result()
+                    if callback:
+                        callback(result)
+                    self.serviceFinished.emit(json.dumps({'job': jid, 'kind': kind, 'result': result}, ensure_ascii=False))
+                except Exception as error:
+                    result = {'error': str(error), 'conflict': isinstance(error, services.SaveConflict)}
+                    self.serviceFinished.emit(json.dumps({'job': jid, 'kind': kind, **result}, ensure_ascii=False))
+                    if kind == 'beforeLaunch':
+                        self.launchFinished.emit(json.dumps(result, ensure_ascii=False))
+            if self.save_queue and not self.jobs:
+                gid, profile = self.save_queue.pop(0)
+                self.job('afterGame', lambda: self.saves.sync(gid, profile))
+            if library.state['consoleMode'] and self.guide.poll():
+                window.showFullScreen()
+                window.raise_()
+                window.activateWindow()
+                window.centralWidget().page().runJavaScript("window.orbitRunningMenu?.()")
+            if time.monotonic() - self.last_session_poll < 3:
+                return
+            self.last_session_poll = time.monotonic()
+            if self.torrents.session:
+                try:
+                    self.torrents.status()
+                except (OSError, RuntimeError, ValueError) as error:
+                    self.torrents.error = str(error)
+            for gid, session in list(self.sessions.items()):
+                if not session.alive() and session.seen:
+                    del self.sessions[gid]
+                    profile = library.state['saves'].get(gid)
+                    if profile:
+                        self.save_queue.append((gid, dict(profile)))
+                    self.sessionChanged.emit(json.dumps({'message': 'Игра завершена: ' + session.game.get('name', game['id'])}))
+                elif not session.seen and time.monotonic() - session.started > 120:
+                    del self.sessions[gid]
+                    self.sessionChanged.emit(json.dumps({'message': 'Запуск не подтверждён: ' + session.game.get('name', game['id'])}))
+
+        def feature_request(self, action, p):
+            if action == 'features':
+                return {'protons': [] if platform.IS_WINDOWS else services.proton_versions(steam_roots()), 'consoleMode': library.state['consoleMode'], 'autostart': library.state['autostart'], 'saves': library.state['saves'], 'version': VERSION, 'limits': library.state['torrentLimits'], 'sessions': [{'id': gid, 'name': s.game['name']} for gid, s in self.sessions.items()], 'guideError': self.guide.error}
+            if action == 'saveProfile':
+                gid = p['id']
+                if gid in self.sessions or self.jobs:
+                    raise ValueError('Закрой игру и дождись фоновых операций перед изменением синхронизации.')
+                if not library.game(gid):
+                    raise ValueError('Игра не найдена.')
+                if p.get('enabled'):
+                    profile = {k: p.get(k, '').strip() for k in ('local', 'cloud', 'key')}
+                    self.saves.locations(profile)
+                    if library.state['saves'].get(gid) != profile:
+                        (library.data / 'save-baselines' / (gid + '.json')).unlink(missing_ok=True)
+                    library.state['saves'][gid] = profile
+                else:
+                    library.state['saves'].pop(gid, None)
+                library.save()
+                return {'ok': True}
+            if action in ('syncSaves', 'saveHistory'):
+                gid = p['id']
+                if gid in self.sessions:
+                    raise ValueError('Сначала закрой игру, чтобы не менять сохранения во время игры.')
+                profile = dict(library.state['saves'].get(gid, {}))
+                return self.job(action, lambda: {'history': self.saves.history(profile)} if action == 'saveHistory' else self.saves.sync(gid, profile, p.get('choice', ''), p.get('snapshot', '')))
+            if action in ('checkUpdate', 'downloadUpdate'):
+                return self.job(action, self.updater.check if action == 'checkUpdate' else self.updater.download)
+            if action == 'installUpdate':
+                if self.sessions or self.pending or self.jobs:
+                    raise ValueError('Закрой игры и дождись фоновых операций перед обновлением.')
+                result = self.updater.install()
+                QTimer.singleShot(800, QApplication.instance().quit)
+                return result
+            if action == 'torrentStatus':
+                return self.torrents.status()
+            if action == 'torrentAdd':
+                result = self.torrents.add(p['source'], p['path'])
+                self.torrents.limits(*library.state['torrentLimits'])
+                return result
+            if action == 'torrentAction':
+                return self.torrents.action(p['id'], p['action'])
+            if action == 'torrentLimits':
+                result = self.torrents.limits(p['download'], p['upload'])
+                library.state['torrentLimits'] = [int(p['download']), int(p['upload'])]
+                library.save()
+                return result
+            if action == 'chooseTorrent':
+                return {'path': QFileDialog.getOpenFileName(window, 'Выбрать торрент', str(Path.home()), 'Torrent (*.torrent)')[0]}
+            if action == 'openFolder':
+                from PySide6.QtGui import QDesktopServices
+                from PySide6.QtCore import QUrl
+                path = Path(p['path']).expanduser().resolve()
+                if not path.is_dir():
+                    raise ValueError('Папка не найдена.')
+                QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+                return {'ok': True}
+            if action == 'consoleSettings':
+                if 'autostart' in p:
+                    console.autostart(bool(p['autostart']))
+                    library.state['autostart'] = bool(p['autostart'])
+                if 'enabled' in p:
+                    library.state['consoleMode'] = bool(p['enabled'])
+                library.save()
+                return {'ok': True}
+            if action in ('stopGame', 'resumeGame'):
+                session = self.sessions.get(p['id'])
+                if not session:
+                    raise ValueError('Запущенная игра не найдена.')
+                session.stop() if action == 'stopGame' else session.resume()
+                return {'ok': True}
+            if action == 'power':
+                if self.sessions or self.jobs:
+                    raise ValueError('Сначала закрой игры и дождись сохранения данных.')
+                console.power(p['action'])
+                return {'ok': True}
+            raise ValueError('Неизвестное действие')
 
         def protect_switch(self):
             self.presentation = {'fullscreen': window.isFullScreen(), 'geometry': window.saveGeometry()}
@@ -428,8 +602,8 @@ def create_bridge(window, library):
                         if time.monotonic() - self.pending['readySince'] < 1.5:
                             return
                         self.reveal_switch()
-                        result = {'ok': True, 'settingsApplied': True} if self.pending.get('restartOnly') else library.launch(self.pending['gameId'])
-                        if not result.get('ok'):
+                        result = {'ok': True, 'settingsApplied': True} if self.pending.get('restartOnly') else self.launch_game(self.pending['gameId'])
+                        if not result.get('ok') and not result.get('preparing'):
                             raise ValueError('Аккаунт игры изменился. Проверь параметры и повтори запуск.')
                         self.timer.stop()
                         self.pending = None
@@ -470,7 +644,7 @@ def create_bridge(window, library):
                 elif action == 'launch':
                     if self.pending:
                         raise ValueError('Сначала дождись переключения аккаунта Steam.')
-                    result = library.launch(p['id'])
+                    result = self.launch_game(p['id'])
                 elif action == 'setShaderSkip':
                     if self.pending:
                         raise ValueError('Дождись завершения операции со Steam.')
@@ -558,9 +732,9 @@ def create_bridge(window, library):
                     QApplication.instance().quit()
                     result = {'ok': True}
                 else:
-                    raise ValueError('Неизвестное действие')
+                    result = self.feature_request(action, p)
                 return json.dumps(result, ensure_ascii=False)
-            except (OSError, ValueError, KeyError) as error:
+            except (OSError, ValueError, KeyError, RuntimeError, ImportError) as error:
                 return json.dumps({'error': str(error)}, ensure_ascii=False)
 
     return Bridge()

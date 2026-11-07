@@ -27,7 +27,7 @@ def bundle(windows):
            '--distpath', str(WORK / 'dist'), '--workpath', str(WORK / 'pyinstaller'), '--specpath', str(WORK),
            '--add-data', f'{ROOT / "ui"}{os.pathsep}ui', '--hidden-import', 'PySide6.QtSvg',
            '--copy-metadata', 'PySide6', '--copy-metadata', 'PySide6_Essentials', '--copy-metadata', 'PySide6_Addons',
-           '--copy-metadata', 'shiboken6', '--copy-metadata', 'psutil']
+           '--copy-metadata', 'shiboken6', '--copy-metadata', 'psutil', '--collect-all', 'pygame', '--hidden-import', 'libtorrent']
     if windows:
         cmd += ['--windowed']
     cmd += [str(ROOT / 'launcher.py')]
@@ -152,6 +152,7 @@ Name: "{{userdesktop}}\\Orbit"; Filename: "{{app}}\\Orbit.exe"; Tasks: desktopic
 Name: desktopicon; Description: "Create a desktop shortcut"; Flags: unchecked
 [Run]
 Filename: "{{app}}\\Orbit.exe"; Description: "Launch Orbit"; Flags: nowait postinstall skipifsilent
+Filename: "{{app}}\\Orbit.exe"; Flags: nowait; Check: WizardSilent
 ''', encoding='utf-8-sig')
     run(compiler, script)
     if not output.exists():

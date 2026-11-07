@@ -1,6 +1,12 @@
 name: Build and release Orbit
 on:
   workflow_dispatch:
+    inputs:
+      artifact_run_id:
+        description: 'Reuse packages from a successful build run (leave empty for a full build)'
+        required: false
+        default: ''
+        type: string
   push:
     tags: ['v*']
 permissions:
@@ -10,6 +16,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   linux:
+    if: ${{ inputs.artifact_run_id == '' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 40
     steps:
@@ -47,6 +54,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
   windows:
+    if: ${{ inputs.artifact_run_id == '' }}
     runs-on: windows-2022
     timeout-minutes: 40
     steps:
@@ -90,16 +98,20 @@ jobs:
           if-no-files-found: error
           retention-days: 7
   publish:
+    if: ${{ always() && (inputs.artifact_run_id != '' || (needs.linux.result == 'success' && needs.windows.result == 'success')) }}
     needs: [linux, windows]
     runs-on: ubuntu-22.04
     permissions:
       contents: write
+      actions: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
+          run-id: ${{ inputs.artifact_run_id || github.run_id }}
+          github-token: ${{ github.token }}
       - name: Publish verified release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -111,6 +123,7 @@ jobs:
             echo 'Tag does not match application version'; exit 1
           fi
           cd artifacts
+          sed -i 's/\r$//' SHA256SUMS-linux.txt SHA256SUMS-windows.txt
           sha256sum -c SHA256SUMS-linux.txt
           sha256sum -c SHA256SUMS-windows.txt
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Orbit $VERSION" --notes-file ../RELEASE_NOTES.md --draft ./*

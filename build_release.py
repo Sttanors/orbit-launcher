@@ -175,7 +175,7 @@ def main():
         linux_packages(app)
     artifacts = sorted(p for p in OUT.iterdir() if p.is_file() and p.suffix != '.txt')
     checksum = OUT / ('SHA256SUMS-windows.txt' if sys.platform == 'win32' else 'SHA256SUMS-linux.txt')
-    checksum.write_text(''.join(f'{hashlib.file_digest(p.open("rb"), "sha256").hexdigest()}  {p.name}\n' for p in artifacts), encoding='utf-8')
+    checksum.write_text(''.join(f'{hashlib.file_digest(p.open("rb"), "sha256").hexdigest()}  {p.name}\n' for p in artifacts), encoding='utf-8', newline='\n')
 
 
 if __name__ == '__main__':

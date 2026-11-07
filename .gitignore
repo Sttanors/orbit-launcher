@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.venv/
+data/
+
+# Local machine files and credentials
+Orbit.desktop
+.env
+.env.*
+!.env.example
+.agents/
+.aws/
+.codex/
+.pytest_cache/

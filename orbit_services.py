@@ -82,6 +82,8 @@ class Saves:
         key = profile.get('key', '')
         if not profile.get('local') or not profile.get('cloud') or not re.fullmatch(r'[a-zA-Z0-9_-]{1,80}', key):
             raise ValueError('Укажи папку сохранений, папку облака и общий ключ игры (латиница, цифры, - или _).')
+        if local == self.data.resolve() or local in self.data.resolve().parents:
+            raise ValueError('Папка сохранений не должна содержать данные Orbit.')
         if local == cloud or local in cloud.parents or cloud in local.parents:
             raise ValueError('Папки сохранений и облака не должны находиться друг в друге.')
         if not local.is_dir() or not cloud.is_dir():
@@ -177,6 +179,8 @@ class Saves:
         elif choice == 'cloud' or (choice == '' and latest and (files == baseline or not files)):
             self.restore(local, remote, latest)
             files = self.inventory(local)
+            if snapshot_id or files != latest['files']:
+                latest = self.snapshot(local, remote, files)
         elif choice == 'local' or latest is None or (baseline is not None and remote_files == baseline):
             latest = self.snapshot(local, remote, files)
         else:

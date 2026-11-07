@@ -468,7 +468,7 @@ def create_bridge(window, library):
                         self.launchFinished.emit(json.dumps(result, ensure_ascii=False))
             if self.save_queue and not self.jobs:
                 gid, profile = self.save_queue.pop(0)
-                self.job('afterGame', lambda: self.saves.sync(gid, profile))
+                self.job('afterGame', lambda g=gid, p=profile: self.saves.sync(g, p))
             if library.state['consoleMode'] and self.guide.poll():
                 window.showFullScreen()
                 window.raise_()

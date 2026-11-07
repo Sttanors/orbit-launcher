@@ -37,7 +37,9 @@ class SaveTests(unittest.TestCase):
         self.assertEqual(backups[0].read_text(), 'from-b')
         self.sb.sync('b', self.pb, snapshot_id=first)
         self.assertEqual((self.b/'save.dat').read_text(), 'one')
-        self.assertEqual(len(self.sa.history(self.pa)), 2)
+        self.assertEqual(len(self.sa.history(self.pa)), 3)
+        self.sb.sync('b', self.pb)
+        self.assertEqual((self.b/'save.dat').read_text(), 'one')
 
     def test_first_sync_never_overwrites_nonempty_other_computer(self):
         (self.a/'save').write_text('a'); (self.b/'save').write_text('b')

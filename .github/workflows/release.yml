@@ -37,6 +37,7 @@ jobs:
           python -m unittest discover -s tests -v
           python tests/switch_smoke.py
           python tests/ui_smoke.py
+          python tests/features_smoke.py
       - name: Build deb, rpm and Arch package
         run: python build_release.py
       - name: Smoke test bundled app
@@ -78,6 +79,7 @@ jobs:
           python -m unittest discover -s tests -v
           python tests/switch_smoke.py
           python tests/ui_smoke.py
+          python tests/features_smoke.py
       - name: Build Windows installer
         run: python build_release.py
       - name: Smoke test bundled Windows app

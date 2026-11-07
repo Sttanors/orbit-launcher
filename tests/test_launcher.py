@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from launcher import Library, read_vdf, app_names, scan_steam, account_from_connection_log, minimize_steam_library, start_steam
 
 
+@unittest.skipIf(sys.platform == 'win32', 'Linux launch behavior; Windows is covered by test_platform')
 class LibraryTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

@@ -35,6 +35,7 @@ class SwitchTests(unittest.TestCase):
         self.running = patch('launcher.running_steam_games',return_value=False).start()
         self.spawn = patch('launcher.subprocess.Popen').start()
         self.which = patch('launcher.shutil.which',return_value='/usr/bin/steam').start()
+        self.command = patch('launcher.steam_command',return_value=['steam']).start()
         self.minimize = patch('launcher.minimize_steam_library',return_value=1).start()
         self.addCleanup(patch.stopall)
         self.addCleanup(self.bridge.timer.stop)

@@ -1,0 +1,117 @@
+name: Build and release Orbit
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+concurrency:
+  group: orbit-release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install build tools and Qt runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm zstd libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0 libnss3 libasound2 libxcomposite1 libxdamage1 libxrandr2 libxtst6 libxi6
+          python -m pip install -r requirements-build.txt
+      - name: Test source
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QTWEBENGINE_CHROMIUM_FLAGS: --no-sandbox --disable-gpu
+        run: |
+          python -m unittest discover -s tests -v
+          python tests/switch_smoke.py
+          python tests/ui_smoke.py
+      - name: Build deb, rpm and Arch package
+        run: python build_release.py
+      - name: Smoke test bundled app
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QTWEBENGINE_CHROMIUM_FLAGS: --no-sandbox --disable-gpu
+          ORBIT_DATA_DIR: ${{ runner.temp }}/orbit-test-data
+        run: |
+          build/release/dist/orbit/orbit --windowed --screenshot "$RUNNER_TEMP/orbit-smoke.png"
+          test -s "$RUNNER_TEMP/orbit-smoke.png"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages
+          path: release-dist/*
+          if-no-files-found: error
+          retention-days: 7
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Python build dependencies
+        run: python -m pip install -r requirements-build.txt
+      - name: Install Inno Setup if needed
+        shell: pwsh
+        run: |
+          if (!(Test-Path 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe')) {
+            choco install innosetup --yes --no-progress
+          }
+      - name: Test source on Windows
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QTWEBENGINE_CHROMIUM_FLAGS: --no-sandbox --disable-gpu
+        run: |
+          python -m unittest discover -s tests -v
+          python tests/switch_smoke.py
+          python tests/ui_smoke.py
+      - name: Build Windows installer
+        run: python build_release.py
+      - name: Smoke test bundled Windows app
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QTWEBENGINE_CHROMIUM_FLAGS: --no-sandbox --disable-gpu
+          ORBIT_DATA_DIR: ${{ runner.temp }}\orbit-test-data
+        run: |
+          $shot = Join-Path $env:RUNNER_TEMP 'orbit-smoke.png'
+          $process = Start-Process -FilePath 'build/release/dist/Orbit/Orbit.exe' -ArgumentList @('--windowed','--screenshot',"`"$shot`"") -PassThru
+          if (!$process.WaitForExit(45000)) { $process.Kill(); throw 'Orbit startup timed out' }
+          if ($process.ExitCode -ne 0 -or !(Test-Path $shot)) { throw 'Orbit startup failed' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: release-dist/*
+          if-no-files-found: error
+          retention-days: 7
+  publish:
+    needs: [linux, windows]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Publish verified release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(sed -n 's/^VERSION = "\([0-9.]*\)"/\1/p' launcher.py)
+          test -n "$VERSION"
+          TAG="v$VERSION"
+          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" != "$TAG" ]]; then
+            echo 'Tag does not match application version'; exit 1
+          fi
+          cd artifacts
+          sha256sum -c SHA256SUMS-linux.txt
+          sha256sum -c SHA256SUMS-windows.txt
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Orbit $VERSION" --notes-file ../RELEASE_NOTES.md --draft ./*
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false

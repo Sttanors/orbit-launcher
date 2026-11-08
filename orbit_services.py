@@ -12,6 +12,8 @@ import sys
 import time
 import uuid
 import urllib.request
+import urllib.error
+import http.client
 import zipfile
 import certifi
 
@@ -205,6 +207,21 @@ class Saves:
         return {'ok': True, 'message': 'Сохранения синхронизированы', 'history': self.history(profile)}
 
 
+def update_process_environment():
+    """Do not pass the frozen application's libraries to OS utilities or a new Orbit."""
+    env = os.environ.copy()
+    if getattr(sys, 'frozen', False) and sys.platform.startswith('linux'):
+        original = env.pop('LD_LIBRARY_PATH_ORIG', '')
+        # An earlier Orbit restart may have left another bundle in _ORIG.
+        paths = [p for p in original.split(os.pathsep) if p and Path(p).name != '_internal']
+        if paths: env['LD_LIBRARY_PATH'] = os.pathsep.join(paths)
+        else: env.pop('LD_LIBRARY_PATH', None)
+        for key in ('QT_PLUGIN_PATH', 'QT_QPA_PLATFORM_PLUGIN_PATH', 'QML2_IMPORT_PATH'):
+            env.pop(key, None)
+    env['PYINSTALLER_RESET_ENVIRONMENT'] = '1'
+    return env
+
+
 def user_install_root():
     if not getattr(sys, 'frozen', False) or sys.platform == 'win32':
         return None
@@ -218,10 +235,13 @@ def install_user_bundle(package, root, version):
     root=Path(root)
     root.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.stage-',dir=root) as temp:
-        subprocess.run(['tar','--zstd','-xf',str(package),'-C',temp,'opt/orbit'],check=True,timeout=180)
+        try:
+            subprocess.run(['tar','--zstd','-xf',str(package),'-C',temp,'opt/orbit'],check=True,timeout=180,env=update_process_environment(),capture_output=True,text=True)
+        except subprocess.CalledProcessError as error:
+            raise ValueError('Не удалось распаковать обновление: ' + (error.stderr or str(error))[-1200:]) from error
         payload=Path(temp)/'opt/orbit'
         binary=payload/'orbit'
-        result=subprocess.run([str(binary),'--version'],capture_output=True,text=True,check=True,timeout=30,env={**os.environ,'PYINSTALLER_RESET_ENVIRONMENT':'1'})
+        result=subprocess.run([str(binary),'--version'],capture_output=True,text=True,check=True,timeout=30,env=update_process_environment())
         if result.stdout.strip()!=version:
             raise ValueError('Версия внутри пакета не совпала с релизом.')
         target=root/version
@@ -238,6 +258,7 @@ def install_user_bundle(package, root, version):
 class Updater:
     def __init__(self, data, version):
         self.data, self.version, self.release, self.ready = Path(data), version, None, None
+        self.progress = {'phase': 'idle', 'message': '', 'downloaded': 0, 'total': 0, 'speed': 0}
 
     def fetch_json(self, url):
         request = urllib.request.Request(url, headers={'Accept': 'application/vnd.github+json', 'User-Agent': 'Orbit-Launcher'})
@@ -287,18 +308,70 @@ class Updater:
         expected = next((line.split()[0] for line in entries if len(line.split()) == 2 and line.split()[1].lstrip('*') == asset['name']), '')
         if not re.fullmatch('[a-fA-F0-9]{64}', expected):
             raise ValueError('Контрольная сумма пакета не найдена.')
+        asset_url = url(asset)
         folder = self.data / 'updates'
         folder.mkdir(parents=True, exist_ok=True)
         target = folder / asset['name']
         part = target.with_suffix(target.suffix + '.part')
+        metadata = part.with_name(part.name + '.json')
+        expected = expected.lower()
+        self.progress = {'phase':'verify','message':'Проверяю сохранённый пакет…','downloaded':0,'total':asset.get('size',0),'speed':0}
+        if target.is_file() and digest(target).lower() == expected:
+            self.ready, self.ready_hash = target, expected
+            self.progress = {**self.progress,'phase':'ready','message':'Использую уже скачанный и проверенный пакет'}
+            return {'ok':True,'ready':True,'cached':True}
+        identity = {'sha256':expected,'url':asset_url}
         try:
-            with urllib.request.urlopen(url(asset), timeout=60, context=update_tls_context()) as src, part.open('wb') as dst:
-                shutil.copyfileobj(src, dst)
-            if digest(part).lower() != expected.lower():
-                raise ValueError('Контрольная сумма обновления не совпала.')
-            part.replace(target)
-        finally:
+            same = json.loads(metadata.read_text()) == identity
+        except (OSError, ValueError):
+            same = False
+        if not same:
             part.unlink(missing_ok=True)
+        atomic_json(metadata, identity)
+        total = int(asset.get('size') or 0)
+        for attempt in range(3):
+            offset = part.stat().st_size if part.exists() else 0
+            if total and offset == total:
+                break
+            request = urllib.request.Request(asset_url,headers={'User-Agent':'Orbit-Launcher',**({'Range':f'bytes={offset}-'} if offset else {})})
+            self.progress = {'phase':'download','message':'Подключаюсь к серверу…','downloaded':offset,'total':total,'speed':0}
+            try:
+                with urllib.request.urlopen(request,timeout=30,context=update_tls_context()) as src:
+                    headers = getattr(src,'headers',{})
+                    append = bool(offset and getattr(src,'status',200) == 206)
+                    if append:
+                        match = re.fullmatch(r'bytes (\d+)-(\d+)/(\d+)',headers.get('Content-Range',''))
+                        if not match or int(match[1]) != offset or (total and int(match[3]) != total):
+                            raise ValueError('Сервер вернул неверный диапазон обновления.')
+                        total = int(match[3])
+                    else:
+                        offset = 0
+                        total = total or int(headers.get('Content-Length',0))
+                    done = offset
+                    started = time.monotonic()
+                    with part.open('ab' if append else 'wb') as dst:
+                        while block := src.read(1024 * 1024):
+                            dst.write(block); done += len(block)
+                            self.progress = {'phase':'download','message':'Скачиваю обновление…','downloaded':done,'total':total,'speed':(done-offset)/max(.01,time.monotonic()-started)}
+                    if total and done != total:
+                        raise OSError('Соединение прервалось до завершения загрузки.')
+                break
+            except urllib.error.HTTPError as error:
+                if error.code == 416:
+                    part.unlink(missing_ok=True)
+                if attempt == 2: raise
+            except (OSError, http.client.IncompleteRead) as error:
+                if attempt == 2:
+                    raise ValueError('Загрузка прервалась. Нажми обновление ещё раз — Orbit продолжит с сохранённого места. ' + str(error)) from error
+            self.progress = {**self.progress,'phase':'retry','message':'Соединение прервалось. Продолжаю загрузку…'}
+            time.sleep(.5 * (attempt + 1))
+        self.progress = {**self.progress,'phase':'verify','message':'Проверяю SHA-256…'}
+        if not part.is_file() or digest(part).lower() != expected:
+            part.unlink(missing_ok=True); metadata.unlink(missing_ok=True)
+            raise ValueError('Контрольная сумма обновления не совпала. Повтори загрузку.')
+        part.replace(target)
+        metadata.unlink(missing_ok=True)
+        self.progress = {**self.progress,'phase':'ready','message':'Пакет проверен'}
         self.ready = target
         self.ready_hash = expected.lower()
         return {'ok': True, 'message': 'Обновление проверено. Нажми «Установить и перезапустить».', 'ready': True}
@@ -310,13 +383,14 @@ class Updater:
         if digest(target).lower() != self.ready_hash:
             self.ready = None
             raise ValueError('Пакет изменился после проверки. Скачай обновление заново.')
+        self.progress = {**self.progress,'phase':'install','message':'Распаковываю и проверяю новую версию…'}
         install_root=user_install_root()
         if install_root:
             import shlex
             executable=install_user_bundle(target,install_root,self.release['tag_name'].removeprefix('v'))
             script=self.data/'updates/restart.sh'
             script.write_text('#!/bin/sh\nwhile kill -0 '+str(os.getpid())+' 2>/dev/null; do sleep 1; done\nexec '+shlex.quote(str(executable))+'\n',encoding='utf-8')
-            subprocess.Popen(['/bin/sh',str(script)],start_new_session=True)
+            subprocess.Popen(['/bin/sh',str(script)],start_new_session=True,env=update_process_environment())
         elif sys.platform == 'win32':
             subprocess.Popen([str(target), '/SP-', '/SILENT', '/CLOSEAPPLICATIONS', '/RESTARTAPPLICATIONS'], creationflags=subprocess.DETACHED_PROCESS)
         else:
@@ -326,7 +400,7 @@ class Updater:
             import shlex
             script = self.data / 'updates/install.sh'
             script.write_text('#!/bin/sh\nwhile kill -0 ' + str(os.getpid()) + ' 2>/dev/null; do sleep 1; done\npkexec ' + shlex.join([*command, str(target)]) + '\nstatus=$?\norbit\nexit "$status"\n', encoding='utf-8')
-            subprocess.Popen(['/bin/sh', str(script)], start_new_session=True)
+            subprocess.Popen(['/bin/sh', str(script)], start_new_session=True,env=update_process_environment())
         return {'ok': True}
 
 

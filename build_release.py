@@ -108,7 +108,7 @@ cp -a "{stage}/." %{{buildroot}}/
                 'arch = x86_64\nlicense = LicenseRef-Proprietary\n' + ''.join(f'depend = {d}\n' for d in dependencies) +
                 'optdepend = xdotool: minimize the Steam library during account switches\n')
     (arch / '.PKGINFO').write_text(metadata, encoding='utf-8')
-    run('tar', '--zstd', '--owner=0', '--group=0', '-cf', OUT / f'orbit-launcher-{VERSION}-1-x86_64.pkg.tar.zst',
+    run('tar', '-I', 'zstd -12 -T0', '--owner=0', '--group=0', '-cf', OUT / f'orbit-launcher-{VERSION}-1-x86_64.pkg.tar.zst',
         '-C', arch, '.PKGINFO', 'opt', 'usr')
     # Verify native package metadata, not just archive extensions.
     run('dpkg-deb', '--info', OUT / f'orbit-launcher_{VERSION}_amd64.deb')

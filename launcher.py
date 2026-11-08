@@ -22,7 +22,7 @@ import orbit_evening
 import orbit_console as console
 from concurrent.futures import ThreadPoolExecutor
 
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 
 ROOT = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent))
 LEGACY_DATA = Path(__file__).resolve().parent / 'data'
@@ -487,6 +487,10 @@ def create_bridge(window, library):
                         callback(result)
                     self.serviceFinished.emit(json.dumps({'job': jid, 'kind': kind, 'result': result}, ensure_ascii=False))
                 except Exception as error:
+                    if kind in ('checkUpdate','downloadUpdate','installUpdate'):
+                        folder=library.data/'updates';folder.mkdir(parents=True,exist_ok=True)
+                        with (folder/'updater.log').open('a',encoding='utf-8') as log:
+                            log.write(datetime.now().isoformat()+' '+kind+': '+str(error)+'\n')
                     result = {'error': str(error), 'conflict': isinstance(error, services.SaveConflict)}
                     self.serviceFinished.emit(json.dumps({'job': jid, 'kind': kind, **result}, ensure_ascii=False))
                     if kind == 'beforeLaunch':
@@ -537,6 +541,8 @@ def create_bridge(window, library):
                 return {'profiles': library.state['eveningProfiles']}
             if action == 'eveningPicks':
                 return orbit_evening.recommend(library.refresh(), library.state['eveningProfiles'], p.get('minutes', 60), p.get('mood', 'relax'), p.get('surprise') is True, p.get('exclude', []))
+            if action == 'updateProgress':
+                return self.updater.progress
             if action == 'features':
                 return {'protons': [] if platform.IS_WINDOWS else services.proton_versions(steam_roots()), 'consoleMode': library.state['consoleMode'], 'autostart': library.state['autostart'], 'saves': library.state['saves'], 'version': VERSION, 'limits': library.state['torrentLimits'], 'sessions': [{'id': gid, 'name': s.game['name']} for gid, s in self.sessions.items()], 'guideError': self.guide.error}
             if action == 'saveProfile':

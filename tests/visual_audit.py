@@ -38,7 +38,7 @@ setup=r'''(()=>{
  if(scene==='toast'){open('#settings-dialog');toast('Длинное сообщение об ошибке: '+name);}
  if(scene==='launch'){$('#launch-status').hidden=false;$('#launch-status-text').textContent='Жду входа в выбранный аккаунт Steam. При необходимости открой Steam и подтверди вход / Steam Guard.';}
  window.scrollTo(0,0);document.querySelectorAll('dialog[open]').forEach(d=>d.scrollTop=bottom?d.scrollHeight:0);
- window.auditScene=scene;const menus={'runner-menu':'game-runner','proton-menu':'game-proton','account-menu':'steam-account','sort-menu':'sort'};if(menus[scene])document.getElementById(menus[scene]).closest('.orbit-select').querySelector('.select-trigger').click();
+ window.auditScene=scene;const menus={'runner-menu':'game-runner','proton-menu':'game-proton','account-menu':'steam-account','sort-menu':'sort'};window.auditMenuId=menus[scene]?menus[scene]+'-menu':null;if(menus[scene])document.getElementById(menus[scene]).closest('.orbit-select').querySelector('.select-trigger').click();
  return true;
 })()'''
 metrics=r'''(()=>{
@@ -47,7 +47,7 @@ metrics=r'''(()=>{
  const visible=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';
  const bounds=root.getBoundingClientRect();
  const bad=[...root.querySelectorAll('input,select,button,.file-field,.keyboard-row,.download-row')].filter(visible).filter(e=>{const r=e.getBoundingClientRect();return r.left<bounds.left-2||r.right>bounds.right+2}).map(e=>e.id||e.className);
- return JSON.stringify({menuMissing:window.auditScene?.endsWith('-menu')&&!document.querySelector('.select-menu:popover-open'),viewport:[innerWidth,innerHeight],dialog:top?.id||null,horizontal:root.scrollWidth>root.clientWidth+2,outside:bad,bodyOverflow:document.documentElement.scrollWidth>innerWidth+2,whiteInputs:[...root.querySelectorAll('input:not([type=checkbox])')].filter(visible).filter(e=>getComputedStyle(e).backgroundColor==='rgb(255, 255, 255)').map(e=>e.id)});
+ return JSON.stringify({menuMissing:window.auditMenuId&&!document.getElementById(window.auditMenuId)?.matches(':popover-open'),viewport:[innerWidth,innerHeight],dialog:top?.id||null,horizontal:root.scrollWidth>root.clientWidth+2,outside:bad,bodyOverflow:document.documentElement.scrollWidth>innerWidth+2,whiteInputs:[...root.querySelectorAll('input:not([type=checkbox])')].filter(visible).filter(e=>getComputedStyle(e).backgroundColor==='rgb(255, 255, 255)').map(e=>e.id)});
 })()'''
 current=None
 

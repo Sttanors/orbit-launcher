@@ -18,7 +18,13 @@ game=root/('game.exe' if os.name=='nt' else 'game'); game.write_text('test')
 from unittest.mock import patch
 steam_patch=patch('launcher.scan_steam',return_value=[]);steam_patch.start()
 library=Library(root/'state'); library.save_custom({'path':str(game),'name':'Test Game'})
-bridge=create_bridge(window,library); bridge.updater.check=lambda:{'available':True,'version':'0.2.4','current':'0.2.3','notes':'Test update'}; launches=[];bridge.launch_game=lambda gid: launches.append(gid) or {'ok':True}; channel=QWebChannel(); channel.registerObject('bridge',bridge); view.page().setWebChannel(channel)
+bridge=create_bridge(window,library); bridge.updater.check=lambda:{'available':True,'version':'0.2.4','current':'0.2.3','notes':'Test update'}; install_attempts=[]
+def fail_install():
+    install_attempts.append(1)
+    raise ValueError('Test install failure')
+bridge.updater.download=lambda:{'ok':True,'ready':True,'cached':True}
+bridge.updater.install=fail_install
+launches=[];bridge.launch_game=lambda gid: launches.append(gid) or {'ok':True}; channel=QWebChannel(); channel.registerObject('bridge',bridge); view.page().setWebChannel(channel)
 script=r'''(async()=>{
 const check=(condition,label)=>{if(!condition)throw Error(label)};
 try{
@@ -61,6 +67,11 @@ $('#keyboard-dialog').close();$('#add-dialog').close();
 confirmAction('Test power dialog','No real power action',()=>{});check($('#action-dialog').open,'confirmation dialog');$('#action-dialog').close();
 await window.orbitRunningMenu();check($('#running-dialog').open,'running menu');$('#running-dialog').close();
 await showFeatures('updates');check(!document.querySelector('[data-panel="updates"]').hidden,'updates panel');
+$('#update-download').hidden=false;$('#update-download').click();
+await until(()=>$('#update-status').textContent.includes('Test install failure') && !featureBusy,'async install error visible');
+check(!$('#update-install').hidden,'installation retry available');
+$('#update-install').click();check($('#action-dialog').open,'retry confirmation');$('#action-confirm').click();
+await until(()=>!featureBusy && $('#update-status').textContent.includes('Test install failure'),'retry uses verified package');
 window.featureTestResult='PASS: real bridge, profiles, async sync, evening picks/tags/pad/launch, feature panels, virtual keyboard, running menu, confirmation';
 }catch(e){window.featureTestResult='FAIL: '+e.message}
 })();'''.replace('LOCAL',json.dumps(str(local))).replace('CLOUD',json.dumps(str(cloud)))
@@ -104,6 +115,7 @@ view.setUrl(QUrl.fromLocalFile(str(Path(__file__).resolve().parents[1]/'ui/index
 QTimer.singleShot(20000,lambda:app.exit(2))
 code=app.exec();
 if code==0:
+    assert len(install_attempts)==2,'Both install attempts use the already verified package'
     assert len(launches)==1,'Only explicit recommendation click may launch a game'
     assert Library(root/'state').state['eveningProfiles']==library.state['eveningProfiles'],'Evening tags survive restart'
 bridge.service_timer.stop();bridge.executor.shutdown(wait=True);temp.cleanup();sys.exit(code)

@@ -58,7 +58,8 @@ class UserInstallTests(unittest.TestCase):
    for version in ('0.2.3','0.2.4'):
     binary=payload/'orbit';binary.write_text('#!/bin/sh\necho '+version+'\n');binary.chmod(0o755)
     subprocess.run(['tar','--zstd','-cf',str(package),'-C',str(root/'payload'),'opt/orbit'],check=True)
-    installed=install_user_bundle(package,install,version)
+    with patch('orbit_services.sys.frozen',True,create=True),patch.dict(os.environ,{'LD_LIBRARY_PATH':'/nonexistent/_internal'}):
+     installed=install_user_bundle(package,install,version)
     self.assertEqual(subprocess.check_output([str(installed),'--version'],text=True).strip(),version)
     self.assertEqual((install/'current').resolve(),install/version)
    self.assertTrue((install/'0.2.3/orbit').exists())

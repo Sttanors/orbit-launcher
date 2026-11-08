@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from orbit_services import Saves, SaveConflict, Updater, digest, game_command, proton_versions, update_tls_context
+from orbit_services import Saves, SaveConflict, Updater, digest, game_command, proton_versions, update_tls_context, update_process_environment
 
 
 class SaveTests(unittest.TestCase):
@@ -81,12 +81,61 @@ class UpdaterTests(unittest.TestCase):
         with patch.object(self.updater,'fetch_json',return_value=self.release), patch.object(self.updater,'package',return_value=('_amd64.deb','SHA256SUMS-linux.txt')), patch('urllib.request.urlopen',side_effect=response):
             self.assertTrue(self.updater.download()['ready'])
             self.assertEqual(self.updater.ready.read_bytes(), package)
-        self.updater.ready=None
+        self.updater.ready.unlink(); self.updater.ready=None
         def bad(url, **kwargs): return io.BytesIO((checksum+'  orbit_0.2.0_amd64.deb\n').encode() if str(url).endswith('.txt') else b'corrupt')
         with patch.object(self.updater,'fetch_json',return_value=self.release), patch.object(self.updater,'package',return_value=('_amd64.deb','SHA256SUMS-linux.txt')), patch('urllib.request.urlopen',side_effect=bad):
             with self.assertRaises(ValueError): self.updater.download()
         self.assertIsNone(self.updater.ready)
         self.assertFalse(list(Path(self.temp.name).rglob('*.part')))
+
+    def test_cached_package_is_verified_and_not_downloaded_again(self):
+        import hashlib
+        package=b'cached package'; checksum=hashlib.sha256(package).hexdigest()
+        folder=Path(self.temp.name)/'updates';folder.mkdir()
+        (folder/'orbit_0.2.0_amd64.deb').write_bytes(package)
+        def response(url,**kwargs):
+            self.assertTrue(str(url).endswith('.txt'),'Binary must not be downloaded twice')
+            return io.BytesIO((checksum+'  orbit_0.2.0_amd64.deb\n').encode())
+        with patch.object(self.updater,'fetch_json',return_value=self.release),patch.object(self.updater,'package',return_value=('_amd64.deb','SHA256SUMS-linux.txt')),patch('urllib.request.urlopen',side_effect=response):
+            self.assertTrue(self.updater.download()['cached'])
+        self.assertEqual(self.updater.ready.read_bytes(),package)
+
+    def test_interrupted_download_resumes_from_saved_bytes(self):
+        import hashlib
+        package=b'a'*(1024*1024)+b'finished';checksum=hashlib.sha256(package).hexdigest()
+        self.release['assets'][0]['size']=len(package)
+        ranges=[]
+        def response(url,**kwargs):
+            if isinstance(url,str):return io.BytesIO((checksum+'  orbit_0.2.0_amd64.deb\n').encode())
+            ranges.append(url.get_header('Range'))
+            if len(ranges)==1:
+                stream=io.BytesIO(package[:1024*1024]);stream.status=200;stream.headers={'Content-Length':str(len(package))}
+            else:
+                stream=io.BytesIO(package[1024*1024:]);stream.status=206;stream.headers={'Content-Range':f'bytes 1048576-{len(package)-1}/{len(package)}'}
+            return stream
+        with patch.object(self.updater,'fetch_json',return_value=self.release),patch.object(self.updater,'package',return_value=('_amd64.deb','SHA256SUMS-linux.txt')),patch('urllib.request.urlopen',side_effect=response),patch('orbit_services.time.sleep'):
+            self.assertTrue(self.updater.download()['ready'])
+        self.assertEqual(ranges,[None,'bytes=1048576-'])
+        self.assertEqual(self.updater.ready.read_bytes(),package)
+
+    def test_range_ignored_by_server_restarts_without_appending(self):
+        import hashlib
+        package=b'complete';checksum=hashlib.sha256(package).hexdigest()
+        folder=Path(self.temp.name)/'updates';folder.mkdir();part=folder/'orbit_0.2.0_amd64.deb.part';part.write_bytes(b'old')
+        (folder/(part.name+'.json')).write_text(json.dumps({'sha256':checksum,'url':self.release['assets'][0]['browser_download_url']}))
+        def response(url,**kwargs):
+            return io.BytesIO((checksum+'  orbit_0.2.0_amd64.deb\n').encode() if isinstance(url,str) else package)
+        with patch.object(self.updater,'fetch_json',return_value=self.release),patch.object(self.updater,'package',return_value=('_amd64.deb','SHA256SUMS-linux.txt')),patch('urllib.request.urlopen',side_effect=response):
+            self.updater.download()
+        self.assertEqual(self.updater.ready.read_bytes(),package)
+
+    def test_frozen_system_tools_and_restart_have_clean_environment(self):
+        with patch('orbit_services.sys.frozen',True,create=True),patch('orbit_services.sys.platform','linux'),patch.dict(os.environ,{'LD_LIBRARY_PATH':'/app/_internal','LD_LIBRARY_PATH_ORIG':'/old/_internal:/system/custom','QT_PLUGIN_PATH':'/app/plugins'}):
+            env=update_process_environment()
+        self.assertEqual(env['LD_LIBRARY_PATH'],'/system/custom')
+        self.assertNotIn('LD_LIBRARY_PATH_ORIG',env)
+        self.assertNotIn('QT_PLUGIN_PATH',env)
+        self.assertEqual(env['PYINSTALLER_RESET_ENVIRONMENT'],'1')
 
     def test_check_compares_numeric_versions(self):
         self.updater.version='0.9.0'

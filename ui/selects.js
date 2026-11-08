@@ -20,7 +20,8 @@
     const options=[...opened.menu.children];
     if(!options.length)return;
     active=Math.max(0,Math.min(options.length-1,index));
-    options[active].focus({preventScroll:true});options[active].scrollIntoView({block:'nearest'});
+    const option=options[active];option.focus({preventScroll:true});
+    const menu=opened.menu;if(option.offsetTop<menu.scrollTop)menu.scrollTop=option.offsetTop;else if(option.offsetTop+option.offsetHeight>menu.scrollTop+menu.clientHeight)menu.scrollTop=option.offsetTop+option.offsetHeight-menu.clientHeight;
   }
   function choose(index) {
     const state=opened;if(!state)return;
@@ -29,6 +30,16 @@
     state.select.dispatchEvent(new Event('input',{bubbles:true}));
     state.select.dispatchEvent(new Event('change',{bubbles:true}));
     sync(state);close();
+  }
+  function position(state) {
+    const rect=state.trigger.getBoundingClientRect();
+    const below=innerHeight-rect.bottom-12,above=rect.top-12;
+    const upwards=below<150&&above>below;
+    state.menu.style.width=Math.min(rect.width,innerWidth-24)+'px';
+    state.menu.style.left=Math.max(12,Math.min(rect.left,innerWidth-rect.width-12))+'px';
+    state.menu.style.maxHeight=Math.max(48,Math.min(300,upwards?above:below))+'px';
+    state.menu.style.top=upwards?'auto':rect.bottom+6+'px';
+    state.menu.style.bottom=upwards?innerHeight-rect.top+6+'px':'auto';
   }
   function open(state) {
     if(opened===state)return close();
@@ -40,14 +51,7 @@
       button.setAttribute('aria-selected',String(index===state.select.selectedIndex));
       button.onclick=event=>{event.preventDefault();choose(index);};state.menu.append(button);
     }
-    const rect=state.trigger.getBoundingClientRect();
-    const below=innerHeight-rect.bottom-12,above=rect.top-12;
-    const upwards=below<150&&above>below;
-    state.menu.style.width=Math.min(rect.width,innerWidth-24)+'px';
-    state.menu.style.left=Math.max(12,Math.min(rect.left,innerWidth-rect.width-12))+'px';
-    state.menu.style.maxHeight=Math.max(48,Math.min(300,upwards?above:below))+'px';
-    state.menu.style.top=upwards?'auto':rect.bottom+6+'px';
-    state.menu.style.bottom=upwards?innerHeight-rect.top+6+'px':'auto';
+    position(state);
     state.menu.showPopover();state.trigger.setAttribute('aria-expanded','true');
     focusOption(state.select.selectedIndex<0?0:state.select.selectedIndex);
   }
@@ -83,8 +87,8 @@
     } else if(event.key==='Tab')close();
   },true);
   document.addEventListener('pointerdown',event=>{if(opened&&!opened.wrapper.contains(event.target))close(false);},true);
-  document.addEventListener('scroll',event=>{if(opened&&!opened.menu.contains(event.target))close(false);},true);
-  window.addEventListener('resize',()=>close(false));
+  document.addEventListener('scroll',event=>{if(opened&&!opened.menu.contains(event.target))position(opened);},true);
+  window.addEventListener('resize',()=>{if(opened)position(opened);});
   document.querySelectorAll('dialog').forEach(d=>d.addEventListener('close',()=>{if(!d.open&&opened&&d.contains(opened.wrapper))close(false);}));
   window.orbitSelectGamepad=(pad,now,previous)=>{
     const pressed=i=>!!pad.buttons[i]?.pressed,fresh=i=>pressed(i)&&!previous[i];

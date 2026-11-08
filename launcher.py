@@ -18,10 +18,11 @@ import uuid
 import orbit_platform as platform
 import orbit_services as services
 import orbit_imports
+import orbit_evening
 import orbit_console as console
 from concurrent.futures import ThreadPoolExecutor
 
-VERSION = "0.2.4"
+VERSION = "0.3.0"
 
 ROOT = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent))
 LEGACY_DATA = Path(__file__).resolve().parent / 'data'
@@ -289,7 +290,7 @@ class Library:
     def __init__(self, data=DATA):
         self.data = Path(data)
         self.path = self.data / 'library.json'
-        self.state = {'custom': [], 'favorites': [], 'recent': {}, 'steamAccounts': {}, 'skipShaderPrecache': False, 'saves': {}, 'consoleMode': False, 'autostart': False, 'torrentLimits': [0, 0], 'importedDownloads': {}}
+        self.state = {'custom': [], 'favorites': [], 'recent': {}, 'steamAccounts': {}, 'skipShaderPrecache': False, 'saves': {}, 'consoleMode': False, 'autostart': False, 'torrentLimits': [0, 0], 'importedDownloads': {}, 'eveningProfiles': {}}
         if self.path.exists():
             saved = json.loads(self.path.read_text(encoding='utf-8'))
             self.state.update(saved)
@@ -522,6 +523,20 @@ def create_bridge(window, library):
                     self.sessionChanged.emit(json.dumps({'message': 'Запуск не подтверждён: ' + session.game.get('name', gid)}))
 
         def feature_request(self, action, p):
+            if action == 'eveningInfo':
+                return {'profiles': library.state['eveningProfiles']}
+            if action == 'eveningProfile':
+                if not library.game(p['id']):
+                    raise ValueError('Игра не найдена. Обнови библиотеку.')
+                if p.get('clear'):
+                    library.state['eveningProfiles'].pop(p['id'], None)
+                else:
+                    profile = orbit_evening.validate_profile(p.get('minutes'), p.get('moods'))
+                    library.state['eveningProfiles'][p['id']] = profile
+                library.save()
+                return {'profiles': library.state['eveningProfiles']}
+            if action == 'eveningPicks':
+                return orbit_evening.recommend(library.refresh(), library.state['eveningProfiles'], p.get('minutes', 60), p.get('mood', 'relax'), p.get('surprise') is True, p.get('exclude', []))
             if action == 'features':
                 return {'protons': [] if platform.IS_WINDOWS else services.proton_versions(steam_roots()), 'consoleMode': library.state['consoleMode'], 'autostart': library.state['autostart'], 'saves': library.state['saves'], 'version': VERSION, 'limits': library.state['torrentLimits'], 'sessions': [{'id': gid, 'name': s.game['name']} for gid, s in self.sessions.items()], 'guideError': self.guide.error}
             if action == 'saveProfile':
@@ -752,6 +767,7 @@ def create_bridge(window, library):
                     library.state['custom'] = [g for g in library.state['custom'] if g['id'] != p['id']]
                     library.state['favorites'] = [i for i in library.state['favorites'] if i != p['id']]
                     library.state['recent'].pop(p['id'], None)
+                    library.state['eveningProfiles'].pop(p['id'], None)
                     library.save()
                     result = {'games': library.refresh()}
                 elif action == 'fullscreen':

@@ -7,7 +7,7 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtCore import QTimer,QUrl
 parser=argparse.ArgumentParser();parser.add_argument('--out',type=Path,default=Path('/tmp/orbit-audit'));parser.add_argument('--sizes',default='1440x900,1280x720,800x600,480x800');args=parser.parse_args();args.out.mkdir(parents=True,exist_ok=True)
 app=QApplication([]);view=QWebEngineView();view.show();results=[];queue=[]
-scenes=['library','add','edit','steam','switch','settings','help','remove','downloads','updates','console','saves','running','action','keyboard','nested-keyboard','toast','launch']
+scenes=['library','add','edit','steam','switch','settings','help','remove','downloads','updates','console','saves','running','action','keyboard','nested-keyboard','toast','launch','runner-menu','proton-menu','account-menu','sort-menu']
 scenes += [name+'-bottom' for name in ('add','edit','settings','help','downloads','saves','updates')]
 for size in args.sizes.split(','):
  w,h=map(int,size.split('x'))
@@ -21,8 +21,8 @@ setup=r'''(()=>{
  const name='Очень длинное название игры: полное коллекционное издание';
  const requested=SCENE;const bottom=requested.endsWith('-bottom');const scene=requested.replace(/-bottom$/,'');
  const open=id=>$(id).showModal();
- if(scene==='add'||scene==='edit') { openAdd(); $('#game-path').value=path+'game.exe'; $('#game-name').value=name; $('#game-proton').replaceChildren(new Option('GE-Proton с очень длинным названием версии','x'));$('#game-runner').value='proton';$('#proton-label').hidden=false;if(scene==='edit'){$('#editor-title').textContent='Параметры игры';$('#editor-delete').hidden=false;$('#editor-submit').textContent='Сохранить изменения';} }
- if(scene==='steam'){$('#steam-game-name').textContent=name;$('#steam-account').replaceChildren(new Option('Очень длинный никнейм игрока (длинный-логин) · активен','x'));$('#steam-account-status').textContent='Сейчас в Steam: длинный никнейм игрока';open('#steam-dialog');}
+ if(['add','edit','runner-menu','proton-menu'].includes(scene)) { openAdd(); $('#game-path').value=path+'game.exe'; $('#game-name').value=name; $('#game-proton').replaceChildren(new Option('GE-Proton с очень длинным названием версии','x'));$('#game-runner').value='proton';$('#proton-label').hidden=false;if(scene==='edit'){$('#editor-title').textContent='Параметры игры';$('#editor-delete').hidden=false;$('#editor-submit').textContent='Сохранить изменения';} }
+ if(scene==='steam'||scene==='account-menu'){$('#steam-game-name').textContent=name;$('#steam-account').replaceChildren(new Option('Очень длинный никнейм игрока (длинный-логин) · активен','x'));$('#steam-account-status').textContent='Сейчас в Steam: длинный никнейм игрока';open('#steam-dialog');}
  if(scene==='switch'){$('#switch-description').textContent=name+' будет запущена с аккаунтом игрока.';open('#switch-dialog');}
  if(scene==='settings')open('#settings-dialog');
  if(scene==='help')openHelp();
@@ -38,6 +38,7 @@ setup=r'''(()=>{
  if(scene==='toast'){open('#settings-dialog');toast('Длинное сообщение об ошибке: '+name);}
  if(scene==='launch'){$('#launch-status').hidden=false;$('#launch-status-text').textContent='Жду входа в выбранный аккаунт Steam. При необходимости открой Steam и подтверди вход / Steam Guard.';}
  window.scrollTo(0,0);document.querySelectorAll('dialog[open]').forEach(d=>d.scrollTop=bottom?d.scrollHeight:0);
+ window.auditScene=scene;const menus={'runner-menu':'game-runner','proton-menu':'game-proton','account-menu':'steam-account','sort-menu':'sort'};if(menus[scene])document.getElementById(menus[scene]).closest('.orbit-select').querySelector('.select-trigger').click();
  return true;
 })()'''
 metrics=r'''(()=>{
@@ -46,14 +47,14 @@ metrics=r'''(()=>{
  const visible=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';
  const bounds=root.getBoundingClientRect();
  const bad=[...root.querySelectorAll('input,select,button,.file-field,.keyboard-row,.download-row')].filter(visible).filter(e=>{const r=e.getBoundingClientRect();return r.left<bounds.left-2||r.right>bounds.right+2}).map(e=>e.id||e.className);
- return JSON.stringify({viewport:[innerWidth,innerHeight],dialog:top?.id||null,horizontal:root.scrollWidth>root.clientWidth+2,outside:bad,bodyOverflow:document.documentElement.scrollWidth>innerWidth+2,whiteInputs:[...root.querySelectorAll('input:not([type=checkbox])')].filter(visible).filter(e=>getComputedStyle(e).backgroundColor==='rgb(255, 255, 255)').map(e=>e.id)});
+ return JSON.stringify({menuMissing:window.auditScene?.endsWith('-menu')&&!document.querySelector('.select-menu:popover-open'),viewport:[innerWidth,innerHeight],dialog:top?.id||null,horizontal:root.scrollWidth>root.clientWidth+2,outside:bad,bodyOverflow:document.documentElement.scrollWidth>innerWidth+2,whiteInputs:[...root.querySelectorAll('input:not([type=checkbox])')].filter(visible).filter(e=>getComputedStyle(e).backgroundColor==='rgb(255, 255, 255)').map(e=>e.id)});
 })()'''
 current=None
 
 def next_scene():
  global current
  if not queue:
-  issues=[r for r in results if r['horizontal'] or r['outside'] or r['bodyOverflow'] or r['whiteInputs']]
+  issues=[r for r in results if r['horizontal'] or r['outside'] or r['bodyOverflow'] or r['whiteInputs'] or r['menuMissing']]
   (args.out/'metrics.json').write_text(json.dumps(results,ensure_ascii=False,indent=2));print(json.dumps({'screenshots':len(results),'issues':issues},ensure_ascii=False));app.exit(1 if issues else 0);return
  current=queue.pop(0);w,h,scene=current;view.resize(w,h)
  view.page().runJavaScript(setup.replace('SCENE',json.dumps(scene)),lambda _:QTimer.singleShot(350,capture))

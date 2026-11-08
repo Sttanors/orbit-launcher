@@ -94,6 +94,19 @@ script = r'''(() => {
     check($('#shader-skip-value').textContent==='ВКЛ' && $('#shader-skip').getAttribute('aria-pressed')==='true','shader skip setting display');
     skipShaderPrecache=false; updateShaderSetting();
     check($('#shader-skip-value').textContent==='ВЫКЛ','shader skip disabled display');
+    openAdd();
+    const runnerTrigger=$('#game-runner').closest('.orbit-select').querySelector('.select-trigger');
+    runnerTrigger.focus();key('ArrowDown','ArrowDown');
+    check($('#game-runner-menu').matches(':popover-open'),'runner menu opens inside Chromium');
+    key('ArrowDown','ArrowDown');key('Enter','Enter');
+    check($('#game-runner').value==='proton' && !$('#proton-label').hidden,'custom menu keyboard selects Proton');
+    runnerTrigger.click();
+    previousButtons=[];handleGamepad(pad([1]),3000);
+    check(!$('#game-runner-menu').matches(':popover-open') && $('#add-dialog').open,'gamepad back closes menu only');
+    runnerTrigger.click();nextMove=0;previousButtons=[];handleGamepad(pad([12]),3500);
+    handleGamepad(pad([]),3750);handleGamepad(pad([0]),4000);
+    check($('#game-runner').value==='native','gamepad selects native runner');
+    key('Escape','Escape');
     return 'PASS: filters, search, editing, Steam accounts, help, expanded keyboard shortcuts, gamepad buttons, dialogs';
   } catch(error) { return 'FAIL: '+error.message; }
 })()'''

@@ -8,7 +8,14 @@ const api = (action, payload = {}) => new Promise((resolve, reject) => {
     catch (error) { reject(error); }
   });
 });
-function toast(message) { $('#toast').textContent = message; $('#toast').classList.add('visible'); clearTimeout(toastTimer); toastTimer = setTimeout(() => $('#toast').classList.remove('visible'), 4500); }
+function toast(message) {
+  const popup = $('#toast');
+  popup.textContent = message;
+  if(popup.showPopover) { if(popup.matches(':popover-open')) popup.hidePopover(); popup.showPopover(); }
+  popup.classList.add('visible');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { popup.classList.remove('visible'); if(popup.matches(':popover-open')) popup.hidePopover(); }, 4500);
+}
 function imageURL(value) { try { const u = new URL(value); return u.protocol === 'file:' ? u.href : ''; } catch { return ''; } }
 function setHero(game) {
   selected = game;

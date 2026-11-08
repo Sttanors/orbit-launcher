@@ -7,3 +7,56 @@ body{font-family:'DejaVu Sans',Arial,sans-serif;font-kerning:normal;font-variant
 
 .launch-status{display:flex;align-items:center;gap:12px;padding:15px 18px;margin-top:18px;border:1px solid #d1f68a30;background:#d1f68a09;border-radius:9px;color:#dbe8cd;font-size:11px}.launch-status>span{flex:1;line-height:1.7}.launch-status button{white-space:nowrap}@media(max-width:800px){.launch-status{flex-wrap:wrap}.launch-status>span{flex-basis:100%}}
 .feature-dialog{width:min(880px,92vw)}.feature-tabs,.download-actions,.keyboard-row{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0}.feature-tabs .active{border-color:var(--accent,#b8f77b);color:#c9ff94}.download-row{padding:18px;border:1px solid #ffffff20;border-radius:14px;margin:14px 0}.download-row h4{margin:0 0 12px;font-size:18px}.download-row p{font-size:14px}.download-row progress{width:100%;accent-color:#c9ff94}.speed-limits{display:flex;gap:12px;align-items:end;margin-top:18px}.speed-limits label{flex:1}#update-notes{white-space:pre-wrap;overflow-wrap:anywhere;max-height:280px;overflow:auto;font:14px/1.6 inherit}#keyboard-dialog{width:min(850px,94vw)}.keyboard-row{flex-wrap:nowrap;gap:6px;justify-content:center}.keyboard-row button{padding:12px;min-width:36px}.keyboard-row button:focus-visible{outline:3px solid #c9ff94}#keyboard-preview{min-height:40px;background:#ffffff0b;padding:12px;border-radius:10px;overflow-wrap:anywhere}.feature-dialog section h3{margin-top:24px}.feature-dialog button{white-space:normal}#saves-conflict{border:1px solid #e2ae66;padding:14px;border-radius:12px}
+
+/* Shared popup controls: every screen uses the same dark, full-width fields. */
+:root{color-scheme:dark}
+button,input,select,textarea{min-width:0}
+button:disabled{cursor:default;opacity:.5;transform:none;filter:none}
+dialog{padding:26px;max-width:calc(100vw - 32px);max-height:calc(100dvh - 32px);overflow-x:hidden;overflow-y:auto;scrollbar-gutter:stable;scroll-padding:20px;overscroll-behavior:contain}
+dialog h2,dialog h3,dialog h4,dialog p,dialog .settings-action span{overflow-wrap:anywhere}
+.dialog-heading{gap:16px;align-items:flex-start}
+.dialog-heading>div,.dialog-heading>h2{min-width:0}
+.close{flex:0 0 38px;width:38px;height:38px;line-height:1;border-radius:8px;background:#ffffff06;display:inline-flex;align-items:center;justify-content:center}
+dialog label:not(.checkbox-label){display:block;font-size:12px;line-height:1.6;color:#c5cebe;margin:16px 0}
+dialog input:not([type=checkbox]),dialog select,dialog textarea{display:block;width:100%;max-width:100%;min-height:44px;margin:7px 0 0;padding:11px 12px;border:1px solid #ffffff26;border-radius:8px;background:#0f140f;color:#e6efde;font-size:13px;line-height:1.5}
+dialog input::placeholder{color:#85917d;opacity:1}
+dialog select{padding-right:30px}
+dialog input[readonly]{color:#acb7a2}
+dialog .file-field{min-width:0;align-items:stretch;gap:8px}
+dialog .file-field input{flex:1;width:0}
+dialog .file-field button{flex:0 0 auto;margin-top:7px;min-height:44px;white-space:nowrap}
+.checkbox-label{margin:16px 0;font-size:12px;line-height:1.6}
+.checkbox-label input{flex:0 0 18px;width:18px;height:18px}
+.dialog-actions{flex-wrap:wrap;align-items:stretch}
+dialog .primary,dialog .secondary{min-height:42px;line-height:1.5;white-space:normal;justify-content:center;text-align:center;padding:10px 16px;overflow-wrap:anywhere}
+.settings-action{min-height:52px;gap:12px;line-height:1.6}
+.settings-action kbd,.settings-action strong{flex-shrink:0}
+.form-note{line-height:1.8}
+.download-row{min-width:0;overflow-wrap:anywhere}
+.download-row h3,.download-row h4{margin-top:0;line-height:1.5}
+.download-row>button{margin:4px 6px 4px 0}
+.download-row progress{display:block;max-width:100%;height:8px}
+.speed-limits{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;align-items:end}
+.speed-limits label{margin:0!important;min-width:0}
+.speed-limits button{align-self:end}
+#update-notes{font-family:inherit;font-size:12px;line-height:1.8;max-width:100%;padding:0 4px 0 0}
+#saves-conflict>button{display:flex;width:100%;margin:10px 0}
+#keyboard-keys{width:100%;min-width:0}
+.keyboard-row{gap:6px;margin:8px 0}
+.keyboard-row button{flex:1 1 0;min-width:0;max-width:52px;min-height:44px;padding:8px 2px;font-size:15px}
+.keyboard-row:last-child{flex-wrap:wrap;margin-top:16px}
+.keyboard-row:last-child button{flex:1 1 85px;max-width:none;font-size:12px}
+#keyboard-preview{max-height:100px;overflow:auto;white-space:pre-wrap;line-height:1.6}
+.help-table{table-layout:fixed;width:100%}
+.help-table td,.help-table th{overflow-wrap:anywhere}
+/* Popover puts notifications above the active modal's top layer. */
+.toast{inset:auto auto 24px 50%;margin:0;width:max-content;max-width:calc(100vw - 32px);line-height:1.7;overflow-wrap:anywhere}
+.toast::backdrop{background:transparent;pointer-events:none}
+.hero{height:auto;min-height:350px}
+.hero-content{height:auto;min-height:350px}
+.hero-actions{margin-top:16px}
+.hero-content h1{overflow-wrap:anywhere}
+.launch-status{overflow-wrap:anywhere}
+@media(min-width:1700px){.hero,.hero-content{min-height:460px}}
+@media(max-width:800px){dialog{padding:22px}.hero-content{width:100%}.hero-caption{display:none}.help-table td,.help-table th{padding:9px 6px}.speed-limits{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.speed-limits button{grid-column:1/-1;justify-self:start}footer>div:first-child{min-width:0}#status{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.controls{flex-shrink:0;margin-left:12px}}
+@media(max-width:520px){dialog{padding:18px;border-radius:14px}.dialog-heading{gap:10px}.dialog-heading h2{font-size:22px;line-height:1.4}.dialog-actions>*{flex:1 1 140px}.feature-tabs{gap:7px}.feature-tabs button{flex:1;padding:9px 8px}.download-actions>*{flex:1 1 120px}.download-row{padding:12px}.keyboard-row{gap:3px}.keyboard-row button{min-height:38px;font-size:13px}.keyboard-row:last-child button{flex-basis:75px}.hero-content{padding:24px;width:100%}.hero-actions .primary{padding:0 16px}.hero-actions .primary kbd{margin-left:0}.hero-content h1{font-size:32px}.help-table{font-size:10px}.help-table td,.help-table th{padding:8px 4px}.settings-action{padding:14px 3px}.settings-action span{font-size:11px}.settings-action kbd{font-size:9px}.section-top{gap:10px}.section-top>div{min-width:0}.section-top h2{font-size:20px}.filters{flex-wrap:wrap}.search-sort{gap:8px}.controls{gap:6px}footer{font-size:8px}.toast{padding:12px 16px}}

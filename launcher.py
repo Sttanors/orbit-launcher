@@ -20,7 +20,7 @@ import orbit_services as services
 import orbit_console as console
 from concurrent.futures import ThreadPoolExecutor
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 
 ROOT = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent))
 LEGACY_DATA = Path(__file__).resolve().parent / 'data'

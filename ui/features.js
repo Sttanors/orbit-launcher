@@ -8,6 +8,7 @@ async function featureInfo() { featureState=await api('features'); return featur
 async function background(action, payload={}, done) {
   const result=await api(action,payload);
   featureJobs.set(result.job, {done, action});
+  featureBusy=true;updateFeatureButtons();
   return result;
 }
 async function setupFeatureSignals() {
@@ -15,23 +16,24 @@ async function setupFeatureSignals() {
   bridge.serviceFinished.connect(raw=>{
     const event=JSON.parse(raw), job=featureJobs.get(event.job);
     featureJobs.delete(event.job);
+    if(['downloadUpdate','installUpdate'].includes(event.kind))$('#update-progress').hidden=true;
     if(event.error) {
       toast(event.error);
       if(event.kind==='syncSaves' || event.kind==='beforeLaunch' || event.kind==='afterGame') {
         $('#saves-status').textContent=event.error;
         $('#saves-conflict').hidden=!event.conflict;
       }
-      if(['checkUpdate','downloadUpdate'].includes(event.kind)) $('#update-status').textContent=event.error;
+      if(['checkUpdate','downloadUpdate','installUpdate'].includes(event.kind)) {$('#update-status').textContent=event.error;if(event.kind==='installUpdate')$('#update-install').hidden=false;}
     } else {
       job?.done?.(event.result);
       if(event.kind==='afterGame') toast('Сохранения после игры синхронизированы');
     }
-    featureBusy=false; updateFeatureButtons();
+    featureBusy=featureJobs.size>0; updateFeatureButtons();
   });
   bridge.libraryChanged?.connect(raw=>{const item=JSON.parse(raw); refresh().then(()=>toast('Добавлена в библиотеку: '+item.name));});
   bridge.sessionChanged.connect(raw=>toast(JSON.parse(raw).message));
 }
-function updateFeatureButtons() { for(const id of ['update-check','update-download','saves-sync','saves-config','saves-history']) $('#'+id).disabled=featureBusy; }
+function updateFeatureButtons() { for(const id of ['update-check','update-download','update-install','saves-sync','saves-config','saves-history']) $('#'+id).disabled=featureBusy; }
 async function showFeatures(panel='downloads') {
   await featureInfo();
   $('#settings-dialog').close();
@@ -93,17 +95,30 @@ $('#update-check').onclick=()=>safeFeature(async()=>{
     $('#update-download').hidden=!result.available;
   }); } catch(e) {featureBusy=false; updateFeatureButtons(); throw e;}
 });
+async function installOrbitUpdate() {
+  if([...featureJobs.values()].some(j=>j.action==='installUpdate'))return;
+  featureBusy=true;updateFeatureButtons();$('#update-install').hidden=true;$('#update-status').textContent='Устанавливаю обновление…';
+  try {await background('installUpdate',{},()=>{$('#update-status').textContent='Обновление установлено. Перезапускаю Orbit…';});}
+  catch(e){featureBusy=false;updateFeatureButtons();$('#update-install').hidden=false;$('#update-status').textContent=e.message;}
+}
 $('#update-download').onclick=()=>safeFeature(async()=>{
-  featureBusy=true; updateFeatureButtons(); $('#update-status').textContent='Скачиваю пакет и проверяю SHA-256…';
-  try { await background('downloadUpdate',{},result=>{ $('#update-status').textContent='Пакет проверен. Запускаю установку…'; $('#update-download').hidden=true; safeFeature(async()=>{try {await api('installUpdate');} catch(e) {$('#update-install').hidden=false;throw e;}}); }); }
+  featureBusy=true; updateFeatureButtons(); $('#update-status').textContent='Подключаюсь к GitHub…';
+  try { await background('downloadUpdate',{},result=>{ $('#update-status').textContent=result.cached?'Использую сохранённый пакет…':'Пакет проверен. Запускаю установку…'; $('#update-download').hidden=true; installOrbitUpdate(); }); }
   catch(e) {featureBusy=false; updateFeatureButtons(); throw e;}
 });
+setInterval(()=>{
+  if(!bridge || !$('#features-dialog').open || ![...featureJobs.values()].some(j=>['downloadUpdate','installUpdate'].includes(j.action)))return;
+  safeFeature(async()=>{const p=await api('updateProgress');if(![...featureJobs.values()].some(j=>['downloadUpdate','installUpdate'].includes(j.action)))return;const bar=$('#update-progress');bar.hidden=!['download','retry','verify','install'].includes(p.phase);bar.max=p.total||1;if(p.total)bar.value=p.downloaded||0;else bar.removeAttribute('value');
+    const mb=n=>(n/1048576).toFixed(1)+' МБ';
+    $('#update-status').textContent=p.phase==='download'?`${p.message} ${mb(p.downloaded)}${p.total?' / '+mb(p.total)+' · '+Math.floor(p.downloaded/p.total*100)+'%':''}${p.speed?' · '+mb(p.speed)+'/с':''}`:p.message;
+  });
+},500);
 function confirmAction(title, description, action) {
   $('#action-title').textContent=title; $('#action-description').textContent=description;
   $('#action-confirm').onclick=()=>safeFeature(async()=>{ await action(); $('#action-dialog').close(); });
   $('#action-dialog').showModal(); $('#action-dialog .secondary').focus();
 }
-$('#update-install').onclick=()=>confirmAction('Установить обновление?','Orbit закроется для установки. На Linux появится системный запрос подтверждения.',()=>api('installUpdate'));
+$('#update-install').onclick=()=>confirmAction('Установить обновление?','Orbit закроется для установки. На Linux появится системный запрос подтверждения.',installOrbitUpdate);
 $('#console-enabled').onchange=()=>safeFeature(async()=>{await api('consoleSettings',{enabled:$('#console-enabled').checked}); toast('Настройка консольного режима сохранена');});
 $('#autostart-enabled').onchange=()=>safeFeature(async()=>{await api('consoleSettings',{autostart:$('#autostart-enabled').checked}); toast('Настройка автозапуска сохранена');});
 document.querySelectorAll('[data-power]').forEach(button=>button.onclick=()=>confirmAction(button.dataset.power==='suspend'?'Перевести компьютер в сон?':'Выключить компьютер?','Сохрани работу в других приложениях перед продолжением.',()=>api('power',{action:button.dataset.power})));

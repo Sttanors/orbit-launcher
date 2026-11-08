@@ -214,6 +214,7 @@ const HELP = [
   ['Поиск','/ или Ctrl+F','Нажать левый стик (L3)'],
   ['Сортировка','S','—'],
   ['Обновить библиотеку','R или F5','—'],
+  ['Вечер на диване','F6','Start → Вечер на диване → A / ×'],
   ['Меню','F10','Start / Options'],
   ['Эта справка','F1','Back / View / Share'],
   ['Назад / закрыть окно / выйти из поиска','Esc','B / ○'],
@@ -287,6 +288,7 @@ document.addEventListener('keydown', e => {
   else if(e.key === 'Home') jump(0);
   else if(e.key === 'End') jump(visible.length-1);
   else if(e.key === 'Delete') askRemove();
+  else if(e.key === 'F6') window.orbitEvening?.();
   else if(e.key === 'F10') $('#settings-dialog').showModal();
   else handled = false;
   if(handled) e.preventDefault();

@@ -28,6 +28,10 @@ $('#orbit-updates').click();
 await new Promise((resolve,reject)=>{const start=Date.now();const timer=setInterval(()=>{if($('#update-home-title').textContent.includes('0.2.4')){clearInterval(timer);resolve()}else if(Date.now()-start>5000){clearInterval(timer);reject(Error('home update shortcut'))}},50)});
 check($('#features-dialog').open && !document.querySelector('[data-panel=updates]').hidden,'home shortcut opens and checks updates');
 $('#features-dialog').close();
+window.requestAutoImport=true;
+await new Promise((resolve,reject)=>{const start=Date.now();const timer=setInterval(()=>{if(games.some(g=>g.downloadId==='test-torrent')){clearInterval(timer);resolve()}else if(Date.now()-start>5000){clearInterval(timer);reject(Error('automatic library import'))}},50)});
+const imported=games.find(g=>g.downloadId==='test-torrent');check(imported.needsSetup,'completed archive has setup card');
+setHero(imported);await launch(imported);check($('#add-dialog').open && editingId===imported.id,'setup card opens editor without executing download');$('#add-dialog').close();
 await showFeatures('console'); check($('#features-dialog').open,'features dialog');
 check(!document.querySelector('[data-panel="console"]').hidden,'console panel');
 $('#features-dialog').close();
@@ -45,9 +49,23 @@ window.featureTestResult='PASS: real bridge, profiles, async sync, feature panel
 }catch(e){window.featureTestResult='FAIL: '+e.message}
 })();'''.replace('LOCAL',json.dumps(str(local))).replace('CLOUD',json.dumps(str(cloud)))
 started=False
+imported_once=False
 
 def poll():
-    global started
+    global started,imported_once
+    if started and not imported_once:
+        def inject(value):
+            global imported_once
+            if not value or imported_once:return
+            imported_once=True
+            (root/'download.txt').write_text('test download')
+            class CompletedDownload:
+                session=True
+                error=''
+                def status(self):return {'items':[],'errorMessage':''}
+                def completed(self):return [{'id':'test-torrent','name':'Downloaded Test','path':str(root),'files':['download.txt']}]
+            bridge.torrents=CompletedDownload();bridge.last_session_poll=0;bridge.poll_services()
+        view.page().runJavaScript('!!window.requestAutoImport',inject)
     if not started:
         def ready(value):
             global started

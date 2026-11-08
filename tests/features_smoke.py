@@ -18,11 +18,16 @@ game=root/('game.exe' if os.name=='nt' else 'game'); game.write_text('test')
 from unittest.mock import patch
 steam_patch=patch('launcher.scan_steam',return_value=[]);steam_patch.start()
 library=Library(root/'state'); library.save_custom({'path':str(game),'name':'Test Game'})
-bridge=create_bridge(window,library); channel=QWebChannel(); channel.registerObject('bridge',bridge); view.page().setWebChannel(channel)
+bridge=create_bridge(window,library); bridge.updater.check=lambda:{'available':True,'version':'0.2.4','current':'0.2.3','notes':'Test update'}; channel=QWebChannel(); channel.registerObject('bridge',bridge); view.page().setWebChannel(channel)
 script=r'''(async()=>{
 const check=(condition,label)=>{if(!condition)throw Error(label)};
 try{
 await refresh(); check(games.length===1,'real library bridge');
+check($('#download-game').getClientRects().length && $('#orbit-updates').getClientRects().length,'visible download and update entry points');
+$('#orbit-updates').click();
+await new Promise((resolve,reject)=>{const start=Date.now();const timer=setInterval(()=>{if($('#update-home-title').textContent.includes('0.2.4')){clearInterval(timer);resolve()}else if(Date.now()-start>5000){clearInterval(timer);reject(Error('home update shortcut'))}},50)});
+check($('#features-dialog').open && !document.querySelector('[data-panel=updates]').hidden,'home shortcut opens and checks updates');
+$('#features-dialog').close();
 await showFeatures('console'); check($('#features-dialog').open,'features dialog');
 check(!document.querySelector('[data-panel="console"]').hidden,'console panel');
 $('#features-dialog').close();

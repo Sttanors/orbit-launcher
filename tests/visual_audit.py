@@ -13,6 +13,7 @@ for size in args.sizes.split(','):
  w,h=map(int,size.split('x'))
  for scene in scenes:queue.append((w,h,scene))
 setup=r'''(()=>{
+ document.body.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));
  document.querySelectorAll('dialog[open]').forEach(d=>d.close());
  if($('#toast').matches(':popover-open'))$('#toast').hidePopover(); $('#toast').classList.remove('visible'); $('#launch-status').hidden=true;
  games=[{id:'a',name:'Arma 3 — очень длинное название игрового издания',source:'local',installed:true,path:'/games/game.exe',favorite:false,lastPlayed:0},{id:'b',name:'Another world',source:'steam',installed:true,favorite:true,lastPlayed:0}];

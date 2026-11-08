@@ -35,6 +35,11 @@ class TorrentTests(unittest.TestCase):
                 time.sleep(.1)
             self.assertTrue(handle.status().is_seeding,'Loopback torrent did not finish')
             self.assertEqual((dest/'sample.bin').read_bytes(),payload)
+            completed=client.completed()
+            self.assertEqual(completed[0]['files'],['sample.bin'])
+            client.entries[tid]['autoAdd']=False
+            self.assertEqual(client.completed(),[])
+            client.entries[tid]['autoAdd']=True
             client.action(tid,'pause'); self.assertTrue(client.status()['items'][0]['paused'])
             client.session.remove_torrent(handle)
             restored=Torrents(root/'state'); restored.data.mkdir(exist_ok=True); restored.lt=lt; restored.session=lt.session(settings)

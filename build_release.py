@@ -27,7 +27,8 @@ def bundle(windows):
            '--distpath', str(WORK / 'dist'), '--workpath', str(WORK / 'pyinstaller'), '--specpath', str(WORK),
            '--add-data', f'{ROOT / "ui"}{os.pathsep}ui', '--hidden-import', 'PySide6.QtSvg',
            '--copy-metadata', 'PySide6', '--copy-metadata', 'PySide6_Essentials', '--copy-metadata', 'PySide6_Addons',
-           '--copy-metadata', 'shiboken6', '--copy-metadata', 'psutil', '--collect-all', 'pygame', '--hidden-import', 'libtorrent']
+           '--copy-metadata', 'shiboken6', '--copy-metadata', 'psutil', '--collect-all', 'pygame', '--hidden-import', 'libtorrent',
+           '--collect-data', 'certifi']
     if windows:
         cmd += ['--windowed']
     cmd += [str(ROOT / 'launcher.py')]

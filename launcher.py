@@ -21,7 +21,7 @@ import orbit_imports
 import orbit_console as console
 from concurrent.futures import ThreadPoolExecutor
 
-VERSION = "0.2.3"
+VERSION = "0.2.4"
 
 ROOT = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent))
 LEGACY_DATA = Path(__file__).resolve().parent / 'data'
@@ -782,10 +782,15 @@ def run():
 
     parser = argparse.ArgumentParser(description='Orbit game launcher')
     parser.add_argument('--version', action='version', version=VERSION)
+    parser.add_argument('--check-updates', action='store_true', help='Check the official release over verified HTTPS and print JSON')
     parser.add_argument('--windowed', action='store_true')
     parser.add_argument('--screenshot', type=Path)
     parser.add_argument('--apply-steam-settings', action='store_true', help='Restart Steam to apply the saved shader setting')
     args = parser.parse_args()
+    if args.check_updates:
+        from orbit_services import Updater
+        print(json.dumps(Updater(DATA, VERSION).check(), ensure_ascii=False))
+        return
     app = QApplication(sys.argv[:1])
     app.setApplicationName('Orbit')
     window = QMainWindow()

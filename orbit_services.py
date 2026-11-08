@@ -6,15 +6,31 @@ import os
 from pathlib import Path
 import re
 import shutil
+import ssl
 import subprocess
 import sys
 import time
 import uuid
 import urllib.request
 import zipfile
+import certifi
 
 REPO = 'https://api.github.com/repos/Sttanors/orbit-launcher'
 DOWNLOAD = 'https://github.com/Sttanors/orbit-launcher/releases/download/'
+
+
+def update_tls_context():
+    """Keep platform/user trust and add portable roots to frozen builds."""
+    context = ssl.create_default_context()
+    context.load_verify_locations(cafile=certifi.where())
+    # The bundled OpenSSL was built on Ubuntu; its compiled CA paths need not
+    # exist on the user's distribution. Also retain locally installed CA roots.
+    if sys.platform.startswith('linux'):
+        for name in ('/etc/ssl/cert.pem', '/etc/ssl/certs/ca-certificates.crt',
+                     '/etc/pki/tls/certs/ca-bundle.crt'):
+            if Path(name).is_file():
+                context.load_verify_locations(cafile=name)
+    return context
 
 
 def atomic_json(path, value):
@@ -225,7 +241,7 @@ class Updater:
 
     def fetch_json(self, url):
         request = urllib.request.Request(url, headers={'Accept': 'application/vnd.github+json', 'User-Agent': 'Orbit-Launcher'})
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with urllib.request.urlopen(request, timeout=30, context=update_tls_context()) as response:
             return json.load(response)
 
     def check(self):
@@ -266,7 +282,7 @@ class Updater:
             if not value.startswith(DOWNLOAD) or Path(item['name']).name != item['name']:
                 raise ValueError('Недопустимый адрес обновления.')
             return value
-        with urllib.request.urlopen(url(sums), timeout=30) as response:
+        with urllib.request.urlopen(url(sums), timeout=30, context=update_tls_context()) as response:
             entries = response.read(1024 * 1024).decode().splitlines()
         expected = next((line.split()[0] for line in entries if len(line.split()) == 2 and line.split()[1].lstrip('*') == asset['name']), '')
         if not re.fullmatch('[a-fA-F0-9]{64}', expected):
@@ -276,7 +292,7 @@ class Updater:
         target = folder / asset['name']
         part = target.with_suffix(target.suffix + '.part')
         try:
-            with urllib.request.urlopen(url(asset), timeout=60) as src, part.open('wb') as dst:
+            with urllib.request.urlopen(url(asset), timeout=60, context=update_tls_context()) as src, part.open('wb') as dst:
                 shutil.copyfileobj(src, dst)
             if digest(part).lower() != expected.lower():
                 raise ValueError('Контрольная сумма обновления не совпала.')

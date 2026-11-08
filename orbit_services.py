@@ -189,6 +189,36 @@ class Saves:
         return {'ok': True, 'message': 'Сохранения синхронизированы', 'history': self.history(profile)}
 
 
+def user_install_root():
+    if not getattr(sys, 'frozen', False) or sys.platform == 'win32':
+        return None
+    root=Path(sys.executable).resolve().parent.parent
+    return root if root.is_relative_to(Path.home().resolve()) and (root/'.orbit-user-install.json').is_file() else None
+
+
+def install_user_bundle(package, root, version):
+    """Install a verified native release payload into a versioned user directory."""
+    import tempfile
+    root=Path(root)
+    root.mkdir(parents=True,exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='.stage-',dir=root) as temp:
+        subprocess.run(['tar','--zstd','-xf',str(package),'-C',temp,'opt/orbit'],check=True,timeout=180)
+        payload=Path(temp)/'opt/orbit'
+        binary=payload/'orbit'
+        result=subprocess.run([str(binary),'--version'],capture_output=True,text=True,check=True,timeout=30,env={**os.environ,'PYINSTALLER_RESET_ENVIRONMENT':'1'})
+        if result.stdout.strip()!=version:
+            raise ValueError('Версия внутри пакета не совпала с релизом.')
+        target=root/version
+        if target.exists():
+            target.rename(root/(version+'-previous-'+uuid.uuid4().hex[:8]))
+        shutil.move(str(payload),str(target))
+        atomic_json(root/'.orbit-user-install.json',{'layout':1})
+        link=root/('.current-'+uuid.uuid4().hex)
+        link.symlink_to(target.name,target_is_directory=True)
+        link.replace(root/'current')
+    return root/'current/orbit'
+
+
 class Updater:
     def __init__(self, data, version):
         self.data, self.version, self.release, self.ready = Path(data), version, None, None
@@ -207,6 +237,8 @@ class Updater:
         return {'version': version, 'current': self.version, 'available': tuple(map(int, version.split('.'))) > tuple(map(int, self.version.split('.'))), 'notes': release.get('body', '')}
 
     def package(self):
+        if user_install_root():
+            return 'x86_64.pkg.tar.zst', 'SHA256SUMS-linux.txt'
         if sys.platform == 'win32':
             return 'windows-x64-setup.exe', 'SHA256SUMS-windows.txt'
         # Prefer the installed package manager database, not a stray executable.
@@ -262,7 +294,14 @@ class Updater:
         if digest(target).lower() != self.ready_hash:
             self.ready = None
             raise ValueError('Пакет изменился после проверки. Скачай обновление заново.')
-        if sys.platform == 'win32':
+        install_root=user_install_root()
+        if install_root:
+            import shlex
+            executable=install_user_bundle(target,install_root,self.release['tag_name'].removeprefix('v'))
+            script=self.data/'updates/restart.sh'
+            script.write_text('#!/bin/sh\nwhile kill -0 '+str(os.getpid())+' 2>/dev/null; do sleep 1; done\nexec '+shlex.quote(str(executable))+'\n',encoding='utf-8')
+            subprocess.Popen(['/bin/sh',str(script)],start_new_session=True)
+        elif sys.platform == 'win32':
             subprocess.Popen([str(target), '/SP-', '/SILENT', '/CLOSEAPPLICATIONS', '/RESTARTAPPLICATIONS'], creationflags=subprocess.DETACHED_PROCESS)
         else:
             if not shutil.which('pkexec'):
@@ -332,7 +371,7 @@ class Torrents:
         if not source.startswith('magnet:?'):
             self.validated.add(entry['id'])
 
-    def add(self, source, destination):
+    def add(self, source, destination, auto_add=True):
         self.start()
         path = Path(destination).expanduser().resolve()
         if not path.is_dir():
@@ -345,7 +384,7 @@ class Torrents:
             copied = self.data / (tid + '.torrent')
             shutil.copyfile(original, copied)
             source = str(copied)
-        self._add({'id': tid, 'source': source, 'path': str(path), 'paused': False})
+        self._add({'id': tid, 'source': source, 'path': str(path), 'paused': False, 'autoAdd': bool(auto_add)})
         self.save()
         return {'ok': True}
 
@@ -388,8 +427,19 @@ class Torrents:
                 else:
                     self.validated.add(tid)
                     handle.unset_flags(self.lt.torrent_flags.upload_mode)
-            rows.append({'id': tid, 'name': status.name or 'Получение метаданных…', 'progress': round(status.progress * 100, 1), 'speed': status.download_rate, 'uploaded': status.total_upload, 'peers': status.num_peers, 'paused': self.entries[tid]['paused'], 'path': self.entries[tid]['path'], 'complete': status.is_seeding, 'error': status.errc.message() if status.errc.value() else '', 'queued': bool(status.paused and not self.entries[tid]['paused'])})
+            rows.append({'id': tid, 'name': status.name or 'Получение метаданных…', 'progress': round(status.progress * 100, 1), 'speed': status.download_rate, 'uploaded': status.total_upload, 'peers': status.num_peers, 'paused': self.entries[tid]['paused'], 'path': self.entries[tid]['path'], 'complete': status.is_seeding, 'autoAdd': self.entries[tid].get('autoAdd', True), 'error': status.errc.message() if status.errc.value() else '', 'queued': bool(status.paused and not self.entries[tid]['paused'])})
         return {'items': rows, 'errorMessage': self.error}
+
+    def completed(self):
+        if not self.session:
+            return []
+        result=[]
+        for tid,handle in self.handles.items():
+            status=handle.status()
+            if status.is_seeding and tid in self.validated and self.entries[tid].get('autoAdd', True):
+                files=handle.torrent_file().files()
+                result.append({'id':tid,'name':status.name,'path':self.entries[tid]['path'],'files':[files.file_path(i) for i in range(files.num_files())]})
+        return result
 
     def limits(self, download, upload):
         self.start()

@@ -17,10 +17,11 @@ import uuid
 
 import orbit_platform as platform
 import orbit_services as services
+import orbit_imports
 import orbit_console as console
 from concurrent.futures import ThreadPoolExecutor
 
-VERSION = "0.2.2"
+VERSION = "0.2.3"
 
 ROOT = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent))
 LEGACY_DATA = Path(__file__).resolve().parent / 'data'
@@ -288,7 +289,7 @@ class Library:
     def __init__(self, data=DATA):
         self.data = Path(data)
         self.path = self.data / 'library.json'
-        self.state = {'custom': [], 'favorites': [], 'recent': {}, 'steamAccounts': {}, 'skipShaderPrecache': False, 'saves': {}, 'consoleMode': False, 'autostart': False, 'torrentLimits': [0, 0]}
+        self.state = {'custom': [], 'favorites': [], 'recent': {}, 'steamAccounts': {}, 'skipShaderPrecache': False, 'saves': {}, 'consoleMode': False, 'autostart': False, 'torrentLimits': [0, 0], 'importedDownloads': {}}
         if self.path.exists():
             saved = json.loads(self.path.read_text(encoding='utf-8'))
             self.state.update(saved)
@@ -302,7 +303,7 @@ class Library:
         temp.replace(self.path)
 
     def refresh(self):
-        self.games = scan_steam() + [{**g, 'installed': Path(g['path']).is_file()} for g in self.state['custom']]
+        self.games = scan_steam() + [{**g, 'installed': Path(g['path']).is_file() and not g.get('needsSetup')} for g in self.state['custom']]
         accounts = {a['id'] for a in steam_accounts()}
         for game in self.games:
             if game['source'] == 'steam':
@@ -341,13 +342,33 @@ class Library:
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, destination)
             cover = destination.as_uri()
-        game = {'id': gid, 'name': name, 'path': str(path), 'arguments': p.get('arguments', ''), 'cwd': str(cwd), 'source': 'local', 'cover': cover, 'hero': cover, 'runner': p.get('runner', 'native'), 'proton': p.get('proton', '')}
+        game = {'id': gid, 'name': name, 'path': str(path), 'arguments': p.get('arguments', ''), 'cwd': str(cwd), 'source': 'local', 'cover': cover, 'hero': cover, 'runner': p.get('runner', 'native'), 'proton': p.get('proton', ''), 'needsSetup': False}
         if existing:
             existing.update(game)
         else:
             self.state['custom'].append(game)
         self.save()
         return gid
+
+    def import_download(self, download):
+        tid=download['id']
+        if tid in self.state['importedDownloads']:
+            return None
+        detected=orbit_imports.detect_download(download, platform.IS_WINDOWS)
+        existing=next((g for g in self.state['custom'] if detected['path'] and g['path'] and Path(g['path']).resolve()==Path(detected['path']).resolve()),None)
+        if existing:
+            self.state['importedDownloads'][tid]=existing['id']
+            self.save()
+            return None
+        gid='local-'+uuid.uuid4().hex
+        path=Path(detected['path']) if detected['path'] else None
+        versions=services.proton_versions(steam_roots()) if not platform.IS_WINDOWS and path and path.suffix.lower() in ('.exe','.com') else []
+        runner='proton' if not platform.IS_WINDOWS and path and path.suffix.lower() in ('.exe','.com') else 'native'
+        game={'id':gid,'name':download['name'],'source':'local','path':detected['path'],'arguments':'','cwd':str(path.parent) if path else download['path'],'cover':'','hero':'','runner':runner,'proton':versions[0]['path'] if versions else '', 'needsSetup':detected['needsSetup'] or (runner=='proton' and not versions),'downloadPath':download['path'],'downloadId':tid,'launchCandidates':detected['candidates']}
+        self.state['custom'].append(game)
+        self.state['importedDownloads'][tid]=gid
+        self.save()
+        return game
 
     def set_account(self, game_id, account_id):
         game = self.game(game_id)
@@ -367,6 +388,8 @@ class Library:
         game = self.game(game_id)
         if not game:
             raise ValueError('Игра больше не найдена. Обновите библиотеку.')
+        if game.get('needsSetup'):
+            raise ValueError('Открой параметры игры и выбери файл запуска.')
         if game['source'] == 'steam':
             target = self.steam_target(game)
             if target and target['id'] != active_steam_account():
@@ -394,6 +417,7 @@ def create_bridge(window, library):
         launchProgress = Signal(str)
         serviceFinished = Signal(str)
         sessionChanged = Signal(str)
+        libraryChanged = Signal(str)
 
         def __init__(self):
             super().__init__()
@@ -444,7 +468,7 @@ def create_bridge(window, library):
                 result = library.launch(gid)
                 if result.get('ok'):
                     self.sessions[gid] = console.GameSession(game, library.last_process)
-                    self.sessionChanged.emit(json.dumps({'message': 'Игра запущена: ' + game.get('name', game['id'])}))
+                    self.sessionChanged.emit(json.dumps({'message': 'Игра запущена: ' + game.get('name', gid)}))
                 return result
             if profile:
                 self.job('beforeLaunch', lambda: self.saves.sync(gid, profile), lambda _: self.launchFinished.emit(json.dumps(start())))
@@ -480,6 +504,10 @@ def create_bridge(window, library):
             if self.torrents.session:
                 try:
                     self.torrents.status()
+                    for download in self.torrents.completed():
+                        imported=library.import_download(download)
+                        if imported:
+                            self.libraryChanged.emit(json.dumps({'id':imported['id'],'name':imported['name']},ensure_ascii=False))
                 except (OSError, RuntimeError, ValueError) as error:
                     self.torrents.error = str(error)
             for gid, session in list(self.sessions.items()):
@@ -488,10 +516,10 @@ def create_bridge(window, library):
                     profile = library.state['saves'].get(gid)
                     if profile:
                         self.save_queue.append((gid, dict(profile)))
-                    self.sessionChanged.emit(json.dumps({'message': 'Игра завершена: ' + session.game.get('name', game['id'])}))
+                    self.sessionChanged.emit(json.dumps({'message': 'Игра завершена: ' + session.game.get('name', gid)}))
                 elif not session.seen and time.monotonic() - session.started > 120:
                     del self.sessions[gid]
-                    self.sessionChanged.emit(json.dumps({'message': 'Запуск не подтверждён: ' + session.game.get('name', game['id'])}))
+                    self.sessionChanged.emit(json.dumps({'message': 'Запуск не подтверждён: ' + session.game.get('name', gid)}))
 
         def feature_request(self, action, p):
             if action == 'features':
@@ -523,13 +551,18 @@ def create_bridge(window, library):
             if action == 'installUpdate':
                 if self.sessions or self.pending or self.jobs:
                     raise ValueError('Закрой игры и дождись фоновых операций перед обновлением.')
-                result = self.updater.install()
-                QTimer.singleShot(800, QApplication.instance().quit)
-                return result
+                return self.job('installUpdate',self.updater.install,lambda _:QTimer.singleShot(800,QApplication.instance().quit))
+            if action == 'downloadSummary':
+                return {'items':self.torrents.status()['items'] if self.torrents.session else []}
             if action == 'torrentStatus':
-                return self.torrents.status()
+                result=self.torrents.status()
+                for row in result['items']:
+                    row['libraryId']=library.state['importedDownloads'].get(row['id'],'')
+                    if not any(g['id']==row['libraryId'] for g in library.state['custom']):
+                        row['libraryId']=''
+                return result
             if action == 'torrentAdd':
-                result = self.torrents.add(p['source'], p['path'])
+                result = self.torrents.add(p['source'], p['path'], p.get('autoAdd', True))
                 self.torrents.limits(*library.state['torrentLimits'])
                 return result
             if action == 'torrentAction':

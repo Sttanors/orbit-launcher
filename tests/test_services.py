@@ -1,13 +1,14 @@
 import io
 import json
 import os
+import ssl
 from pathlib import Path
 import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from orbit_services import Saves, SaveConflict, Updater, digest, game_command, proton_versions
+from orbit_services import Saves, SaveConflict, Updater, digest, game_command, proton_versions, update_tls_context
 
 
 class SaveTests(unittest.TestCase):
@@ -72,7 +73,11 @@ class UpdaterTests(unittest.TestCase):
     def test_verified_download_and_corruption(self):
         import hashlib
         package=b'valid installer'; checksum=hashlib.sha256(package).hexdigest()
-        def response(url, **kwargs): return io.BytesIO((checksum+'  orbit_0.2.0_amd64.deb\n').encode() if str(url).endswith('.txt') else package)
+        def response(url, **kwargs):
+            context = kwargs['context']
+            self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
+            self.assertTrue(context.check_hostname)
+            return io.BytesIO((checksum+'  orbit_0.2.0_amd64.deb\n').encode() if str(url).endswith('.txt') else package)
         with patch.object(self.updater,'fetch_json',return_value=self.release), patch.object(self.updater,'package',return_value=('_amd64.deb','SHA256SUMS-linux.txt')), patch('urllib.request.urlopen',side_effect=response):
             self.assertTrue(self.updater.download()['ready'])
             self.assertEqual(self.updater.ready.read_bytes(), package)
@@ -87,6 +92,24 @@ class UpdaterTests(unittest.TestCase):
         self.updater.version='0.9.0'
         with patch.object(self.updater,'fetch_json',return_value={'tag_name':'v0.10.0'}):
             self.assertTrue(self.updater.check()['available'])
+
+    def test_portable_trust_without_compiled_system_paths(self):
+        # Reproduce Ubuntu-built OpenSSL running on a different distribution.
+        with patch.dict(os.environ, {'SSL_CERT_FILE': str(Path(self.temp.name)/'absent.pem'),
+                                     'SSL_CERT_DIR': self.temp.name}), patch('orbit_services.sys.platform', 'portable'):
+            context = update_tls_context()
+        self.assertGreater(context.cert_store_stats()['x509_ca'], 0)
+        self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(context.check_hostname)
+
+    def test_api_verifies_tls_and_certificate_errors_propagate(self):
+        error = ssl.SSLCertVerificationError('untrusted certificate')
+        with patch('urllib.request.urlopen', side_effect=error) as request:
+            with self.assertRaises(ssl.SSLCertVerificationError):
+                self.updater.check()
+        context = request.call_args.kwargs['context']
+        self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(context.check_hostname)
 
 
 class ProtonTests(unittest.TestCase):

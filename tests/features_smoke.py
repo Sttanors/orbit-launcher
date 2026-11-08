@@ -18,7 +18,7 @@ game=root/('game.exe' if os.name=='nt' else 'game'); game.write_text('test')
 from unittest.mock import patch
 steam_patch=patch('launcher.scan_steam',return_value=[]);steam_patch.start()
 library=Library(root/'state'); library.save_custom({'path':str(game),'name':'Test Game'})
-bridge=create_bridge(window,library); bridge.updater.check=lambda:{'available':True,'version':'0.2.4','current':'0.2.3','notes':'Test update'}; channel=QWebChannel(); channel.registerObject('bridge',bridge); view.page().setWebChannel(channel)
+bridge=create_bridge(window,library); bridge.updater.check=lambda:{'available':True,'version':'0.2.4','current':'0.2.3','notes':'Test update'}; launches=[];bridge.launch_game=lambda gid: launches.append(gid) or {'ok':True}; channel=QWebChannel(); channel.registerObject('bridge',bridge); view.page().setWebChannel(channel)
 script=r'''(async()=>{
 const check=(condition,label)=>{if(!condition)throw Error(label)};
 try{
@@ -28,6 +28,22 @@ $('#orbit-updates').click();
 await new Promise((resolve,reject)=>{const start=Date.now();const timer=setInterval(()=>{if($('#update-home-title').textContent.includes('0.2.4')){clearInterval(timer);resolve()}else if(Date.now()-start>5000){clearInterval(timer);reject(Error('home update shortcut'))}},50)});
 check($('#features-dialog').open && !document.querySelector('[data-panel=updates]').hidden,'home shortcut opens and checks updates');
 $('#features-dialog').close();
+const until=async(predicate,label)=>{const start=Date.now();while(!predicate()){if(Date.now()-start>5000)throw Error(label+' / '+$('#evening-profile-status').textContent);await new Promise(r=>setTimeout(r,30));}};
+await window.orbitEvening();check($('#evening-dialog').open,'evening opens');check(!$('#evening-results').children.length,'untagged empty state');
+await findEvening(true);check($('#evening-results').children.length===1,'surprise without tags');
+$('#evening-edit').click();await until(()=>$('#evening-profile-dialog').open,'tag editor opens');
+$('#evening-profile-form').requestSubmit();await until(()=>$('#evening-profile-status').textContent==='Выбери хотя бы одно настроение.' && !$('#evening-profile-save').disabled,'empty tags validated');
+$('#evening-profile-moods [data-mood=relax]').click();$('#evening-profile-moods [data-mood=friends]').click();
+$('#evening-duration').value='20';$('#evening-profile-form').requestSubmit();
+await until(()=>$('#evening-profile-status').textContent.startsWith('Теги сохранены. Выбери'),'tags save');
+const saved=await api('eveningInfo');check(Object.values(saved.profiles)[0].moods.length===2,'multiple moods persist via real bridge');
+$('#evening-profile-save').focus();document.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true}));check(document.activeElement.id==='evening-profile-clear','arrow navigation in tag editor');
+previousButtons=[];handleGamepad({buttons:Array.from({length:17},(_,i)=>({pressed:i===1})),axes:[0,0,0,0]},10000);
+check(!$('#evening-profile-dialog').open && $('#evening-dialog').open,'gamepad B closes nested editor only');previousButtons=[];
+await findEvening();check($('#evening-results').children.length===1,'tagged recommendation');
+$('#evening-times [data-minutes="20"]').click();check(!$('#evening-results').children.length,'changed filters clear old results');
+await findEvening();check($('#evening-results button').textContent==='Играть','launch action');
+$('#evening-results button').click();await until(()=>!launching,'recommendation launch');check(!$('#evening-dialog').open,'launch closes evening');
 window.requestAutoImport=true;
 await new Promise((resolve,reject)=>{const start=Date.now();const timer=setInterval(()=>{if(games.some(g=>g.downloadId==='test-torrent')){clearInterval(timer);resolve()}else if(Date.now()-start>5000){clearInterval(timer);reject(Error('automatic library import'))}},50)});
 const imported=games.find(g=>g.downloadId==='test-torrent');check(imported.needsSetup,'completed archive has setup card');
@@ -45,7 +61,7 @@ $('#keyboard-dialog').close();$('#add-dialog').close();
 confirmAction('Test power dialog','No real power action',()=>{});check($('#action-dialog').open,'confirmation dialog');$('#action-dialog').close();
 await window.orbitRunningMenu();check($('#running-dialog').open,'running menu');$('#running-dialog').close();
 await showFeatures('updates');check(!document.querySelector('[data-panel="updates"]').hidden,'updates panel');
-window.featureTestResult='PASS: real bridge, profiles, async sync, feature panels, virtual keyboard, running menu, confirmation';
+window.featureTestResult='PASS: real bridge, profiles, async sync, evening picks/tags/pad/launch, feature panels, virtual keyboard, running menu, confirmation';
 }catch(e){window.featureTestResult='FAIL: '+e.message}
 })();'''.replace('LOCAL',json.dumps(str(local))).replace('CLOUD',json.dumps(str(cloud)))
 started=False
@@ -86,4 +102,8 @@ def poll():
 timer=QTimer();timer.timeout.connect(poll);timer.start(200)
 view.setUrl(QUrl.fromLocalFile(str(Path(__file__).resolve().parents[1]/'ui/index.html')))
 QTimer.singleShot(20000,lambda:app.exit(2))
-code=app.exec();bridge.service_timer.stop();bridge.executor.shutdown(wait=True);temp.cleanup();sys.exit(code)
+code=app.exec();
+if code==0:
+    assert len(launches)==1,'Only explicit recommendation click may launch a game'
+    assert Library(root/'state').state['eveningProfiles']==library.state['eveningProfiles'],'Evening tags survive restart'
+bridge.service_timer.stop();bridge.executor.shutdown(wait=True);temp.cleanup();sys.exit(code)

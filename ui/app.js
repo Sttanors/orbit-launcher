@@ -292,6 +292,7 @@ document.addEventListener('keydown', e => {
 });
 let previousButtons = [], nextMove = 0;
 function handleGamepad(pad, now) {
+  if(window.orbitSelectGamepad?.(pad,now,previousButtons)) { previousButtons=pad.buttons.map(b=>b.pressed); return; }
   const pressed = i => !!pad.buttons[i]?.pressed;
   const fresh = i => pressed(i) && !previousButtons[i];
   if(fresh(16)) window.orbitRunningMenu?.();

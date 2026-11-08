@@ -23,11 +23,11 @@ function setHero(game) {
   const image = imageURL(game?.hero || game?.cover);
   $('#hero-art').style.backgroundImage = image ? `url(${JSON.stringify(image)})` : '';
   $('#hero-tags').replaceChildren();
-  if (game) for (const text of [game.source === 'steam' ? 'STEAM' : 'МОЯ ИГРА', game.installed ? 'ГОТОВА К ЗАПУСКУ' : 'НЕДОСТУПНА ЛОКАЛЬНО']) {
+  if (game) for (const text of [game.source === 'steam' ? 'STEAM' : 'МОЯ ИГРА', game.needsSetup ? 'НУЖНА НАСТРОЙКА' : game.installed ? 'ГОТОВА К ЗАПУСКУ' : 'НЕДОСТУПНА ЛОКАЛЬНО']) {
     const tag = document.createElement('span'); tag.textContent = text; $('#hero-tags').append(tag);
   }
-  $('#hero-description').textContent = game ? (game.installed ? 'Возвращайся туда, где начинается приключение.' : game.source === 'steam' ? 'Диск с игрой недоступен или игра не установлена. Открой Steam, чтобы проверить.' : 'Файл игры недоступен. Проверь подключение диска.') : 'Все твои миры — в одном месте. Добавь первую игру.';
-  $('#play-label').textContent = game ? (game.installed || game.source === 'local' ? 'Играть' : 'Открыть в Steam') : 'Добавить игру';
+  $('#hero-description').textContent = game ? (game.needsSetup ? 'Игра скачана и добавлена. Выбери файл запуска в параметрах; установщик или архив сначала нужно установить или распаковать.' : game.installed ? 'Возвращайся туда, где начинается приключение.' : game.source === 'steam' ? 'Диск с игрой недоступен или игра не установлена. Открой Steam, чтобы проверить.' : 'Файл игры недоступен. Проверь подключение диска.') : 'Все твои миры — в одном месте. Добавь первую игру.';
+  $('#play-label').textContent = game ? (game.needsSetup ? 'Настроить запуск' : game.installed || game.source === 'local' ? 'Играть' : 'Открыть в Steam') : 'Добавить игру';
   $('#favorite').hidden = !game;
   $('#favorite').textContent = game?.favorite ? '★' : '☆';
   $('#favorite').classList.toggle('favorited', !!game?.favorite);
@@ -58,7 +58,7 @@ function render(preferred) {
     if (game.favorite) { const fav = document.createElement('span'); fav.className = 'favorite-badge'; fav.textContent = '★'; cover.append(fav); }
     const play = document.createElement('span'); play.className = 'cover-play'; play.textContent = '▶'; cover.append(play);
     const name = document.createElement('div'); name.className = 'game-name'; name.textContent = game.name;
-    const status = document.createElement('div'); status.className = 'game-status' + (game.installed ? ' installed' : ''); const dot = document.createElement('i'); status.append(dot, document.createTextNode(game.installed ? 'Установлена' : 'Недоступна локально'));
+    const status = document.createElement('div'); status.className = 'game-status' + (game.installed ? ' installed' : ''); const dot = document.createElement('i'); status.append(dot, document.createTextNode(game.needsSetup ? 'Настроить запуск' : game.installed ? 'Установлена' : 'Недоступна локально'));
     card.append(cover, name, status);
     card.onclick = () => setHero(game); card.ondblclick = () => launch(game); card.onfocus = () => setHero(game);
     $('#grid').append(card);
@@ -85,6 +85,7 @@ $('#restart-steam').onclick = restartSteamSettings;
 function busy(value) { if(!value) $('#launch-status').hidden = true; launching = value; $('#play').classList.toggle('launch-busy',value); if(value) $('#status').textContent = 'Steam · выполняется запуск'; else $('#status').textContent = `${games.length} в библиотеке · ${games.filter(g=>g.installed).length} установлено`; }
 async function launch(game = selected) {
   if (!game) return openAdd();
+  if(game.needsSetup) { setHero(game); openEdit(); return; }
   if (launching) return toast('Steam переключает аккаунт. Дождись завершения.');
   busy(true);
   try {

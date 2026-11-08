@@ -28,6 +28,7 @@ async function setupFeatureSignals() {
     }
     featureBusy=false; updateFeatureButtons();
   });
+  bridge.libraryChanged?.connect(raw=>{const item=JSON.parse(raw); refresh().then(()=>toast('Добавлена в библиотеку: '+item.name));});
   bridge.sessionChanged.connect(raw=>toast(JSON.parse(raw).message));
 }
 function updateFeatureButtons() { for(const id of ['update-check','update-download','saves-sync','saves-config','saves-history']) $('#'+id).disabled=featureBusy; }
@@ -52,10 +53,11 @@ document.querySelectorAll('[data-feature]').forEach(el=>el.onclick=()=>switchFea
 async function pickInto(selector, action='chooseDirectory') { const result=await api(action); if(result.path) $(selector).value=result.path; }
 $('#torrent-file').onclick=()=>safeFeature(()=>pickInto('#torrent-source','chooseTorrent'));
 $('#torrent-folder').onclick=()=>safeFeature(()=>pickInto('#torrent-path'));
-$('#torrent-add').onclick=()=>safeFeature(async()=>{ await api('torrentAdd',{source:$('#torrent-source').value.trim(),path:$('#torrent-path').value}); $('#torrent-source').value=''; await refreshTorrents(); });
+$('#torrent-add').onclick=()=>safeFeature(async()=>{ await api('torrentAdd',{source:$('#torrent-source').value.trim(),path:$('#torrent-path').value,autoAdd:$('#torrent-auto-add').checked}); $('#torrent-source').value=''; await refreshTorrents(); });
 $('#limits-save').onclick=()=>safeFeature(async()=>{ await api('torrentLimits',{download:$('#limit-down').value,upload:$('#limit-up').value}); toast('Ограничения скорости сохранены'); });
 async function refreshTorrents() {
   const result=await api('torrentStatus'), list=$('#torrent-list');
+  updateDownloadCount(result.items);
   // Keep focus stable while updating download statistics for gamepad users.
   const focus=document.activeElement?.dataset.downloadAction, tid=document.activeElement?.dataset.tid;
   list.replaceChildren();
@@ -65,12 +67,15 @@ async function refreshTorrents() {
     row.append(element('h4',item.name));
     const progress=document.createElement('progress'); progress.max=100; progress.value=item.progress; progress.setAttribute('aria-label','Прогресс загрузки'); row.append(progress);
     row.append(element('p',`${item.progress}% · ${Math.round(item.speed/1024)} КиБ/с · ${item.peers} пиров · ${item.error || (item.paused ? 'Пауза' : item.complete ? 'Готово · раздаётся' : item.queued ? 'В очереди' : 'Загружается')}`));
+    if(item.libraryId)row.append(element('p','✓ Игра добавлена в библиотеку','download-imported'));
+    else if(item.complete&&item.autoAdd)row.append(element('p','Добавляю игру в библиотеку…','form-note'));
     const actions=element('div','','download-actions');
     for(const [label, action, fn] of [
       [item.paused?'Продолжить':'Пауза','toggle',()=>api('torrentAction',{id:item.id,action:item.paused?'resume':'pause'}).then(refreshTorrents)],
       ['Открыть папку','folder',()=>api('openFolder',{path:item.path})],
       ['Убрать из очереди','remove',()=>confirmAction('Убрать загрузку?','Скачанные файлы останутся на диске.',async()=>{await api('torrentAction',{id:item.id,action:'remove'}); await refreshTorrents();})]
     ]) { const button=featureButton(label,fn); button.dataset.downloadAction=action; button.dataset.tid=item.id; actions.append(button); }
+    if(item.libraryId)actions.append(featureButton('Открыть игру в библиотеке',async()=>{await refresh();$('#features-dialog').close();tab='all';source='all';$('#search').value='';document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab==='all'));document.querySelectorAll('[data-source]').forEach(b=>b.classList.toggle('active',b.dataset.source==='all'));render(item.libraryId);window.scrollTo({top:0,behavior:'smooth'});}));
     row.append(actions); list.append(row);
   }
   if(tid) [...list.querySelectorAll('button')].find(b=>b.dataset.tid===tid && b.dataset.downloadAction===focus)?.focus({preventScroll:true});
@@ -81,6 +86,8 @@ $('#download-add-game').onclick=()=>{ $('#features-dialog').close(); openAdd(); 
 $('#update-check').onclick=()=>safeFeature(async()=>{
   featureBusy=true; updateFeatureButtons(); $('#update-status').textContent='Проверяю релизы GitHub…';
   try { await background('checkUpdate',{},result=>{
+    $('#update-home-title').textContent=result.available?'Доступно обновление '+result.version:'Обновить Orbit';
+    $('#update-home-status').textContent=result.available?'Нажми, чтобы установить новую версию':'Установлена последняя версия · '+result.current;
     $('#update-status').textContent=result.available ? 'Доступна версия '+result.version : 'Установлена последняя версия';
     $('#update-notes').textContent=result.notes;
     $('#update-download').hidden=!result.available;
@@ -177,3 +184,11 @@ window.orbitKeyboard=target=>{ keyboardTarget=target; $('#keyboard-preview').tex
 $('#keyboard-dialog').addEventListener('close',()=>keyboardTarget?.focus());
 $('#keyboard-open').onclick=()=>{ $('#features-dialog').close(); window.orbitKeyboard($('#search')); };
 const featureSignalTimer=setInterval(()=>{if(bridge){clearInterval(featureSignalTimer); setupFeatureSignals();}},100);
+
+function updateDownloadCount(items) {
+  const active=items.filter(i=>!i.complete&&!i.paused).length;
+  $('#download-count').textContent=active;$('#download-count').hidden=!active;
+}
+$('#download-game').onclick=$('#downloads-top').onclick=()=>safeFeature(()=>showFeatures('downloads'));
+$('#orbit-updates').onclick=()=>safeFeature(async()=>{await showFeatures('updates');if(!featureBusy)$('#update-check').click();});
+setInterval(()=>{if(bridge&&!$('#features-dialog').open)api('downloadSummary').then(r=>updateDownloadCount(r.items)).catch(()=>{});},3000);
